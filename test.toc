@@ -1,0 +1,139 @@
+
+(add-ns ev (module "eval.toc"))
+(add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
+                            "reader.toc"
+                            :sha "3a195b6"))
+(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
+                            "ast.toc"
+                            :sha "ba18227"))
+(add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
+                           "state-maybe.toc"
+                           :sha "ecde30b"))
+(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
+                             "grammar.toc"
+                             :sha "7690cd3"))
+
+(def test-exprs
+  ["6"
+   "\"string\""
+   "'a"
+   "'(a b c)"
+   "'[a 3 d]"
+   "(inc 3)"
+   "(let [x (inc 6)] (inc x))"
+   "(let [[_ & tail] '(a b c)] tail)"
+   "(let [[x y] [7 8]] [(inc x) (inc y)])"
+   "(def bs \"bogus\")"
+   "(println bs)"
+   "(defn f [x] (inc x))"
+   "(f 4)"
+
+   "(defn fv [x & y] y)"
+   "(fv 'a 'b 'c)"
+
+   "(defn g [x] (fn [] x))"
+   "((g 9))"
+
+   "(and (maybe 'a) (maybe 'b))"
+   "(and (maybe 'a) nothing)"
+
+   "(or (maybe 'a) (maybe 'b))"
+   "(or nothing (maybe 'b))"
+
+   "(either (maybe 'a) 'b)"
+   "(either nothing 'b)"
+
+   "(HashSet {5 5 3 3 1 1})"
+
+   (to-str ["(defprotocol Proto "
+            "  (no-body [x])"
+            "  (proto-fn [x y] "
+            "      (inc y)))"])
+   "(proto-fn 'dont-care 4)"
+
+   "(extend-type Integer Proto (proto-fn [x y] (+ x (inc y))))"
+
+   "(proto-fn 3 6)"
+
+   ;; '_ "(extend-type GenericType Stringable (string-list [_] (list \"GenericType\")))"
+
+   ;; '_ "(string-list (GenericType 8 2))"
+
+   ;; errors
+   ;; '_ "(extend-type Integer NotProto (proto-fn [x y] (+ x (inc y))))"
+   ;; 4 "(inc 'a)"
+   ])
+
+(defn untag [x]
+  (either (and (.ns x)
+               (maybe (symbol (.sym x))))
+          (.base x)))
+
+(extend-type rdr/tagged-symbol
+  ev/Evaluator
+  (ev/bind [x v]
+    (sm/assoc-in-val [.syms (untag x)] v))
+
+  (ev/eval* [x]
+    (sm/get-in-val [.syms (untag x)])))
+
+(add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
+                           "recursive-descent.toc"
+                           :sha "c89ab00"))
+
+(def parse (rd/parser (grmr/none-or-more
+                       (grmr/any rdr/read-def
+                                 rdr/read-defn
+                                 rdr/read-defprotocol
+                                 ;; rdr/read-main
+                                 rdr/read-extend-type
+                                 ;; rdr/read-deftype
+                                 ;; rdr/read-block-comment
+                                 ;; rdr/read-add-ns
+                                 rdr/read-expr))))
+
+(def symbols {'empty-list empty-list
+              'empty-vector empty-vector
+              'maybe maybe
+              'nothing nothing
+              })
+
+(def eval-state (ev/EvalState symbols {} {} {} {}))
+
+(defn test [[v s]]
+  (assert (instance? String s))
+
+  (sm/new-sm (fn [state]
+               (for [ast (or (parse {'file-name "repl" 'line-number 0} s)
+                             (do
+                               (print-err "Failed to parse:" (str "'" s "'"))
+                               nothing))
+                     ;; :let [_ (print-err 'testing v s ast)]
+                     [val new-state] (or (ev/eval ast state)
+                                         (do 
+                                           (print-err "Failed to evaluate:" ast)
+                                           nothing))
+                     _ (or (= val v)
+                           (= v '_)
+                           (do
+                             (print-err "Evalled to wrong value:")
+                             (print-err "Expr:" (str "'" s "'"))
+                             (print-err "AST:" ast)
+                             (print-err "Expected:" v)
+                             (print-err "Got:" val)
+                             nothing))]
+                 [val new-state]))))
+
+(main [_]
+  (map (parse {'file-name "repl" 'line-number 0}
+              (to-str test-exprs))
+       (fn [asts]
+         ((ev/traverse asts (fn [ast]
+                              (map (ev/eval* ast)
+                                   (fn [v]
+                                     (print-err v ast)))))
+
+          eval-state))))
+
+;; "(let [[x y]  (list (inc 1))] y)"
+

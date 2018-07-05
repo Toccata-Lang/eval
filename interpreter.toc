@@ -1,0 +1,284 @@
+
+(add-ns ev (module "eval.toc"))
+(add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
+                            "file-io.toc"
+                            :sha "e7a489b"))
+(add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
+                            "reader.toc"
+                            :sha "4893cbf"))
+(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
+                            "ast.toc"
+                            :sha "ba18227"))
+(add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
+                           "state-maybe.toc"
+                           :sha "ecde30b"))
+(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
+                             "grammar.toc"
+                             :sha "7690cd3"))
+(add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
+                           "recursive-descent.toc"
+                           :sha "c89ab00"))
+
+(extend-type rdr/tagged-symbol
+  ev/Evaluator
+  (ev/untag [x]
+    (either (map (.ns x)
+                 (fn [ns]
+                   (symbol (str ns "/" (.base x)))))
+            (.base x)))
+
+  (ev/eval-def [x]
+    (comp (sm/get-in-val [.syms (ev/untag x)])
+          (sm/state-maybe (ev/untag x))))
+
+  (ev/bind [x v]
+    (sm/assoc-in-val [.syms (ev/untag x)] v))
+
+  (ev/eval* [x]
+    (comp (sm/get-in-val [.syms (ev/untag x)])
+          (sm/new-sm (fn [s]
+                       (print-err "Could not find definition for symbol" (str "'" x "'") "at"
+                                  (ev/ast-location-str x))
+                       nothing)))))
+
+(def parse (rd/parser (grmr/none-or-more
+                       (grmr/any rdr/read-def
+                                 rdr/read-defn
+                                 rdr/read-defprotocol
+                                 rdr/read-main
+                                 rdr/read-extend-type
+                                 rdr/read-deftype
+                                 rdr/read-block-comment
+                                 ;; rdr/read-add-ns
+                                 rdr/read-expr))))
+
+(def IntegerType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IntegerType};"))
+(def StringBufferType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StringBufferType};"))
+(def SubStringType (inline C Integer "(Value *)&(Integer){IntegerType, -1, SubStringType};"))
+(def FnArityType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FnArityType};"))
+(def FunctionType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FunctionType};"))
+(def ListType (inline C Integer "(Value *)&(Integer){IntegerType, -1, ListType};"))
+(def MaybeType (inline C Integer "(Value *)&(Integer){IntegerType, -1, MaybeType};"))
+(def VectorType (inline C Integer "(Value *)&(Integer){IntegerType, -1, VectorType};"))
+(def VectorNodeType (inline C Integer "(Value *)&(Integer){IntegerType, -1, VectorNodeType};"))
+(def SymbolType (inline C Integer "(Value *)&(Integer){IntegerType, -1, SymbolType};"))
+(def BitmapIndexedType
+  (inline C Integer "(Value *)&(Integer){IntegerType, -1, BitmapIndexedType};"))
+(def ArrayNodeType (inline C Integer "(Value *)&(Integer){IntegerType, -1, ArrayNodeType};"))
+(def HashCollisionNodeType
+  (inline C Integer "(Value *)&(Integer){IntegerType, -1, HashCollisionNodeType};"))
+(def PromiseType (inline C Integer "(Value *)&(Integer){IntegerType, -1, PromiseType};"))
+(def FutureType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FutureType};"))
+(def AgentType (inline C Integer "(Value *)&(Integer){IntegerType, -1, AgentType};"))
+(def OpaqueType (inline C Integer "(Value *)&(Integer){IntegerType, -1, OpaqueType};"))
+
+(def type-nums {'Integer {IntegerType #{}}
+                'StringBuffer {StringBufferType #{}}
+                'SubString {SubStringType #{}}
+                'FnArity {FnArityType #{}}
+                'Function {FunctionType #{}}
+                'List {ListType #{}}
+                'Maybe {MaybeType #{}}
+                'Vector {VectorType #{}}
+                'Symbol {SymbolType #{}}
+                'BitmapIndexedNode {BitmapIndexedType #{}}
+                'ArrayNode {ArrayNodeType #{}}
+                'HashCollisionNode {HashCollisionNodeType #{}}
+                'Promise {PromiseType #{}}
+                'Future {FutureType #{}}
+                'Agent {AgentType #{}}
+                'Opaque {OpaqueType #{}}})
+
+(def interp-list-map (reify
+                       Stringable
+                       (string-list [_]
+                         (list "interp-list-map"))
+
+                       Eq
+                       (=* [x y]
+                         nothing)
+                       
+                       ev/Evaluator
+                       (ev/eval* [x]
+                         (sm/state-maybe x))
+
+                       (ev/apply-fn [_ [l f]]
+                         (ev/traverse (reverse l) (fn [x]
+                                                    (ev/apply-fn f (list x)))))))
+
+(def interp-maybe-map (reify
+                        Stringable
+                        (string-list [_]
+                          (list "interp-maybe-map"))
+
+                        Eq
+                        (=* [x y]
+                          nothing)
+                        
+                        ev/Evaluator
+                        (ev/eval* [x]
+                          (sm/state-maybe x))
+
+                        (ev/apply-fn [_ [mv f]]
+                          (either (map mv (fn [x]
+                                            (map (ev/apply-fn f (list x))
+                                                 maybe)))
+                                  (sm/state-maybe nothing)))))
+
+(def interp-maybe-apply (reify
+                          Stringable
+                          (string-list [_]
+                            (list "interp-maybe-apply"))
+
+                          Eq
+                          (=* [x y]
+                            nothing)
+                          
+                          ev/Evaluator
+                          (ev/eval* [x]
+                            (sm/state-maybe x))
+
+                          (ev/apply-fn [_ [mf mvs]]
+                            (either (apply* (map mf (fn [f]
+                                                      (fn [& args]
+                                                        (map (ev/apply-fn f args)
+                                                             maybe))))
+                                            mvs)
+                                    (sm/state-maybe nothing)))))
+
+(def symbols {'empty-list empty-list
+              'empty-vector empty-vector
+              'maybe maybe
+              'nothing nothing
+              'reified-type-args reified-type-args
+              'reified-get-type reified-get-type
+              'new-type-value new-type-value
+              'make-value make-value
+              'list-count list-count
+              'mutate-vect-conj mutate-vect-conj
+              'list-concat list-concat
+              'add-numbers add-numbers
+              'str-malloc str-malloc
+              'subtract-numbers subtract-numbers
+              'mult-numbers mult-numbers
+              'rem rem
+              'vect-count vect-count
+              'emptyBMI emptyBMI
+              'bit-and bit-and
+              'bit-or bit-or
+              'deliver deliver
+              'delivered delivered
+              'cons cons
+              'sha1-init sha1-init
+              'sha1-finalize sha1-finalize
+              'address-of address-of
+              'identical identical
+              'str-append str-append
+              'pr* pr*
+              'pr-err* pr-err*
+              'escape-chars escape-chars
+              'char char
+              'char-code char-code
+              'subs subs
+              'symbol symbol
+              'sha1-update-type sha1-update-type
+              'add-promise-action add-promise-action
+              'promise promise
+              'future future
+              'thread-id thread-id
+              'deliver-future deliver-future
+              'add-future-action add-future-action
+              'Integer (reify
+                         Type
+                         (instance? [_ x]
+                           (and (=* IntegerType (get-type x))
+                                (maybe x))))
+              'List (reify
+                      Type
+                      (instance? [_ x]
+                        (and (=* ListType (get-type x))
+                             (maybe x))))
+              'Maybe (reify
+                       Type
+                       (instance? [_ x]
+                         (and (=* MaybeType (get-type x))
+                              (maybe x))))
+              'Symbol (reify
+                        Type
+                        (instance? [_ x]
+                          (and (=* SymbolType (get-type x))
+                               (maybe x))))
+              'Vector (reify
+                        Type
+                        (instance? [_ x]
+                          (and (=* VectorType (get-type x))
+                               (maybe x))))
+              'Function (reify
+                          Type
+                          (instance? [_ x]
+                            (and (=* FunctionType (get-type x))
+                                 (maybe x))))
+              'Promise (reify
+                         Type
+                         (instance? [_ x]
+                           (and (=* PromiseType (get-type x))
+                                (maybe x))))
+              'Future (reify
+                        Type
+                        (instance? [_ x]
+                          (and (=* FutureType (get-type x))
+                               (maybe x))))
+              'Agent (reify
+                       Type
+                       (instance? [_ x]
+                         (and (=* AgentType (get-type x))
+                              (maybe x))))
+
+
+              'list-map interp-list-map
+              'maybe-map interp-maybe-map
+              'maybe-apply interp-maybe-apply
+              'abort (zero sm/state-maybe)
+
+              ;; TODO: for the regression tests only
+              'integer-str str
+              'add-ints add-numbers
+              'int= =*
+              })
+
+(def implementations {})
+
+(def eval-state (ev/EvalState symbols {} type-nums {} implementations core-protocols))
+
+(defn interp-file [state file]
+  (for [file-in (fio/file-in file)
+        asts (parse {'file-name file
+                     'line-number 1}
+                    (lazy-list file-in))
+        [result _] ((ev/eval* asts) state)
+        result (last result)]
+    (println "\n" file "\nresult;" result "\n")))
+
+(main [[_ & files]]
+  (for [file-in (fio/file-in "core.toc")
+        asts (parse {'file-name 'core
+                     'line-number 1}
+                    (lazy-list file-in))
+        [_ state] (ev/eval asts eval-state)
+;;         asts (parse {'file-name "test7.toc"
+;;                      'line-number 1}
+;;                     "
+;; (main [_]
+;;   (println \"Howdy,\" \"Boyz!\" 99))
+
+;; (deftype NT [a b c]
+;;   Stringable
+;;   (string-list [_]
+;;       (list \"<NT \" (str a) \" \" (str b) \" \" (str c \">\"))))
+
+;; (str (NT 1 2 3))
+;; ")
+        ]
+    (do
+      (map files (partial interp-file state))
+      (println 'done))))
