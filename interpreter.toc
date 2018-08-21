@@ -28,18 +28,13 @@
             (.base x)))
 
   (ev/eval-def [x]
-    (comp (sm/get-in-val [.syms (ev/untag x)])
-          (sm/state-maybe (ev/untag x))))
+    (ev/eval-def (ev/untag x)))
 
   (ev/bind [x v]
-    (sm/assoc-in-val [.syms (ev/untag x)] v))
+    (ev/bind (ev/untag x) v))
 
   (ev/eval* [x]
-    (comp (sm/get-in-val [.syms (ev/untag x)])
-          (sm/new-sm (fn [s]
-                       (print-err "Could not find definition for symbol" (str "'" x "'") "at"
-                                  (ev/ast-location-str x))
-                       nothing)))))
+    (ev/eval* (ev/untag x))))
 
 (def parse (rd/parser (grmr/none-or-more
                        (grmr/any rdr/read-def
@@ -97,7 +92,7 @@
                        Eq
                        (=* [x y]
                          nothing)
-                       
+
                        ev/Evaluator
                        (ev/eval* [x]
                          (sm/state-maybe x))
@@ -114,7 +109,7 @@
                         Eq
                         (=* [x y]
                           nothing)
-                        
+
                         ev/Evaluator
                         (ev/eval* [x]
                           (sm/state-maybe x))
@@ -133,7 +128,7 @@
                           Eq
                           (=* [x y]
                             nothing)
-                          
+
                           ev/Evaluator
                           (ev/eval* [x]
                             (sm/state-maybe x))
@@ -145,6 +140,55 @@
                                                              maybe))))
                                             mvs)
                                     (sm/state-maybe nothing)))))
+
+(def interp-abort (reify
+                    Stringable
+                    (string-list [_]
+                      (list "interp-abort"))
+
+                    Eq
+                    (=* [x y]
+                      nothing)
+
+                    ev/Evaluator
+                    (ev/eval* [x]
+                      (zero sm/state-maybe))
+
+                    (ev/apply-fn [x y]
+                      (zero sm/state-maybe))))
+
+(def interp-apply* (reify
+                     Stringable
+                     (string-list [_]
+                       (list "interp-apply*"))
+
+                     Eq
+                     (=* [x y]
+                       nothing)
+
+                     ev/Evaluator
+                     (ev/eval* [x]
+                       (sm/state-maybe x))
+
+                     (ev/apply-fn [_ [mf mvs]]
+                       (either (for [_ (or (instance? Function mf)
+                                           (instance? ast/fn-ast mf))
+                                     args-seq (or (empty? mvs)
+                                                  (last mvs))]
+                                 (let [args-prefix (butlast mvs)]
+                                   (either (and (instance? Sequence args-seq)
+                                                (maybe (for [target (ev/eval* mf)
+                                                             args (ev/eval* (comp args-prefix args-seq))
+                                                             r (ev/apply-fn target args)]
+                                                         r)))
+                                           (do
+                                             (print-err "The final argument when using 'apply' on a function"
+                                                        "must be either a Vector or a List.")
+                                             (zero sm/state-maybe)))))
+                               (for [target (ev/eval* mf)
+                                     args (ev/eval* mvs)
+                                     r (ev/apply-fn target args)]
+                                 r)))))
 
 (def symbols {'empty-list empty-list
               'empty-vector empty-vector
@@ -234,13 +278,12 @@
                          (and (=* AgentType (get-type x))
                               (maybe x))))
 
-
+              'apply* interp-apply*
               'list-map interp-list-map
               'maybe-map interp-maybe-map
               'maybe-apply interp-maybe-apply
-              'abort (zero sm/state-maybe)
+              'abort interp-abort
 
-              ;; TODO: for the regression tests only
               'integer-str str
               'add-ints add-numbers
               'int= =*
@@ -251,13 +294,15 @@
 (def eval-state (ev/EvalState symbols {} type-nums {} implementations core-protocols))
 
 (defn interp-file [state file]
-  (for [file-in (fio/file-in file)
-        asts (parse {'file-name file
-                     'line-number 1}
-                    (lazy-list file-in))
-        [result _] ((ev/eval* asts) state)
-        result (last result)]
-    (println "\n" file "\nresult;" result "\n")))
+  (println file)
+  (or (for [file-in (fio/file-in file)
+            asts (parse {'file-name file
+                         'line-number 1}
+                        (lazy-list file-in))
+            [result _] (ev/eval asts state)
+            result (last result)]
+        (println "\nresult:" result "\n"))
+      (maybe (print-err "FAIL!!!\n"))))
 
 (main [[_ & files]]
   (for [file-in (fio/file-in "core.toc")

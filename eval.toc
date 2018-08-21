@@ -14,6 +14,13 @@
                             :sha "4893cbf"))
 
 
+;; useful for debugging
+(defn debug [& args]
+  (sm/new-sm (fn [s]
+               (apply print-err args)
+               (maybe ['_ s]))))
+
+
 (deftype EvalState [syms types type-nums protocols implementations core-protocols]
   Stringable
   (string-list [_] (list "<EvalState>")))
@@ -44,7 +51,7 @@
     (assert (instance? Symbol sym))
 
     (flat-map (eval* v)
-              (partial sm/assoc-in-val [.syms sym])))
+              (partial bind sym)))
 
   (apply-fn [f args]
     (assert-result r (instance? sm/state-maybe r))
@@ -150,6 +157,7 @@
   (str (ast/file-name x) ": "
        (ast/line-number x)))
 
+;; TODO: investigate infinite and mutual recursion
 (extend-type ast/fn-ast
   Evaluator
   (eval-def [x]
@@ -159,7 +167,7 @@
                       (or (.fn-sym x)
                           (maybe "")))
                  (fn [fn-sym]
-                   (sm/get-in-val [.syms (untag fn-sym)])
+                   (eval* (untag fn-sym))
                    ;; (comp (sm/get-in-val [.syms (untag fn-sym)]
                    ;;       (sm/new-sm (fn [s]
                    ;;                    (print-err "Could not define function" (str "'" fn-sym "'") "at:"
@@ -174,9 +182,11 @@
           arity (reduce (.arities x) nothing
                         (fn [found arity]
                           (or (and (= num-args (-> arity .params .fixed count))
+                                   (= nothing (-> arity .params .variadic))
                                    (maybe arity))
                               found
                               (and (-> arity .params .variadic)
+                                   (<= (-> arity .params .fixed count) num-args)
                                    (maybe arity)))))]
       (for [arity (sm/when arity)
             syms (sm/get-val .syms)
@@ -261,7 +271,8 @@
                                              "at" (ast-location-str x)
                                              "failed. Kept existing definition."))
                                 (for [_ (sm/assoc-in-val [.protocols (.protocol-sym x) fn-sym params] prototype)
-                                      _ (sm/assoc-in-val [.syms fn-sym] (ProtoDispatcher fn-sym))
+                                      _ (comp (eval* fn-sym)
+                                              (bind fn-sym (ProtoDispatcher fn-sym)))
                                       _ (either (-> (.default-body prototype)
                                                     (filter (partial instance? ast/CodeAST))
                                                     (empty?)
@@ -273,7 +284,7 @@
                                                                               (and (instance? ReifiedValue disp-arg)
                                                                                    (or (.type-sym disp-arg)
                                                                                        (maybe (.type-num disp-arg))))
-                                                                              (get-type disp-arg))]
+                                                                              (type-name disp-arg))]
                                                                 (print-err "Could not find implementation of"
                                                                            (str "'" fn-sym "'") "with"
                                                                            (inc (count args))
@@ -324,9 +335,8 @@
                                                                                   num-args type-num]
                                                                                  impl)]
                                                           '_)
-                                                        (for [disp-fn (sm/get-in-val [.syms fn-sym])
-                                                              _ (sm/assoc-in-val [.syms fn-sym]
-                                                                                 (ProtoDispatcher fn-sym))
+                                                        (for [disp-fn (eval* fn-sym)
+                                                              _ (bind fn-sym (ProtoDispatcher fn-sym))
                                                               - (sm/assoc-in-val
                                                                  [.implementations fn-sym num-args]
                                                                  {0 disp-fn
@@ -348,7 +358,7 @@
   Evaluator
   (record-defintion [v sym]
     (flat-map (eval* v)
-              (partial sm/assoc-in-val [.syms sym])))
+              (partial bind sym)))
 
   (eval-def [ast]
     (let [target (.call-target ast)]
@@ -437,8 +447,8 @@
                        (print-err "Not enough values in sequence to destructure")
                        (maybe (zero sm/state-maybe))))
                  (maybe (for [ys (traverse (zip-lists (seq (.fixed x)) vs)
-                                            (fn [[target v]]
-                                              (bind target v)))
+                                                (fn [[target v]]
+                                                  (bind target v)))
                               _ (either (map (.variadic x)
                                              (fn [tail]
                                                (bind tail (drop (seq vs) (count (.fixed x))))))
@@ -506,8 +516,8 @@
                                  (and (= type-num (either (map (instance? ReifiedValue v) .type-num)
                                                           (get-type v)))
                                       (maybe v))))
-            _ (sm/assoc-in-val [.syms sym] (ReifiedValue (-> (str "*" sym " constructor*") symbol maybe)
-                                                              const-type [] []))
+            _ (bind sym (ReifiedValue (-> (str "*" sym " constructor*") symbol maybe)
+                                      const-type [] []))
             _ (traverse (remove (.impls x) (partial instance? ast/assert-ast))
                          (fn [impls]
                            (reify-impls impls type-num (ast-location-str x))))]
@@ -525,7 +535,7 @@
       (sm/state-maybe x))
 
     (eval* [x]
-      (sm/state-maybe (.q-val x))))
+      (sm/state-maybe (untag (.q-val x)))))
 
 (extend-type Integer
   Evaluator
@@ -537,16 +547,31 @@
 
 (extend-type Symbol
   Evaluator
+  (bind [sym v]
+    (sm/assoc-in-val [.syms sym] v))
+
   (eval-def [x]
     (comp (sm/get-in-val [.syms x])
           (sm/state-maybe x)))
 
   (eval* [x]
-    (comp (sm/get-in-val [.syms x])
-          (sm/new-sm (fn [s]
-                       (print-err "Could not find definition for symbol" (str "'" x "'") "at"
-                                  (ast-location-str x))
-                       nothing)))))
+    (sm/get-in-val [.syms x])))
+
+(extend-type Maybe
+  Evaluator
+  (eval-def [x]
+    (sm/state-maybe x))
+
+  (eval* [x]
+    (sm/state-maybe x)))
+
+(extend-type HashMap
+  Evaluator
+  (eval-def [x]
+    (sm/state-maybe x))
+
+  (eval* [x]
+    (sm/state-maybe x)))
 
 (extend-type String
   Evaluator
