@@ -1,18 +1,34 @@
 
+(add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
+                            "file-io.toc"
+                            :sha "e7a489b"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "ba18227"))
-
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
                            :sha "ecde30b"))
-
-
-;; TODO: it's an abomination that this is needed in here
+(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
+                             "grammar.toc"
+                             :sha "7690cd3"))
+(add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
+                           "recursive-descent.toc"
+                           :sha "c89ab00"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
                             :sha "4893cbf"))
 
+
+(def parse (rd/parser (grmr/none-or-more
+                       (grmr/any rdr/read-def
+                                 rdr/read-defn
+                                 rdr/read-defprotocol
+                                 rdr/read-main
+                                 rdr/read-extend-type
+                                 rdr/read-deftype
+                                 rdr/read-block-comment
+                                 rdr/read-add-ns
+                                 rdr/read-expr))))
 
 ;; useful for debugging
 (defn debug [& args]
@@ -21,9 +37,22 @@
                (maybe ['_ s]))))
 
 
-(deftype EvalState [syms types type-nums protocols implementations core-protocols]
+(deftype EvalNamespace [imports syms impls])
+
+(deftype EvalState [ns types type-nums core-protocols file-name]
   Stringable
   (string-list [_] (list "<EvalState>")))
+
+(defn get-syms []
+  (flat-map (sm/get-val .file-name)
+            (fn [ns-path]
+              (sm/get-in-val [.ns ns-path .syms]))))
+
+
+(defn set-syms [syms]
+  (flat-map (sm/get-val .file-name)
+            (fn [ns-path]
+              (sm/assoc-in-val [.ns ns-path .syms] syms))))
 
 (defprotocol Evaluator
   (traverse [coll f]
@@ -37,6 +66,9 @@
 
   (bind-fields [_]
     (sm/state-maybe '_))
+
+  (lookup-sym [s]
+    (assert-result r (instance? sm/state-maybe r)))
 
   (eval* [x]
     (assert-result r (instance? sm/state-maybe r))
@@ -52,6 +84,25 @@
 
     (flat-map (eval* v)
               (partial bind sym)))
+
+  (new-protocol [_]
+    (assert-result r (instance? sm/state-maybe r)))
+
+  (get-protocol [_]
+    (assert-result r (instance? sm/state-maybe r)))
+
+  (set-prototype [sym fn-sym params proto]
+    (assert-result r (instance? sm/state-maybe r)))
+
+  (dispatcher-path [_]
+    (assert-result r (instance? String r))
+    "")
+
+  (get-impl [sym num-args type-num]
+    (assert-result r (instance? sm/state-maybe r)))
+
+  (set-impl [sym num-args type-num impl]
+    (assert-result r (instance? sm/state-maybe r)))
 
   (apply-fn [f args]
     (assert-result r (instance? sm/state-maybe r))
@@ -73,14 +124,17 @@
     (list "<ReifiedValue '" (str (either type-sym "")) "' " (str type-num) ">"))
 
   Evaluator
+  (eval* [x]
+    (sm/state-maybe x))
+
   (bind-fields [_]
     (bind field-names fields))
 
   (apply-fn [disp-arg args]
     (let [num-args (inc (count args))]
-      (flat-map (comp (sm/get-in-val [.implementations 'invoke num-args type-num])
-                      (sm/get-in-val [.implementations 'invoke num-args 0]))
-                (fn [impl] 
+      (flat-map (comp (get-impl 'invoke num-args type-num)
+                      (get-impl 'invoke num-args 0))
+                (fn [impl]
                   (apply-fn impl (cons disp-arg (seq args))))))))
 
 (extend-type List
@@ -142,11 +196,11 @@
                               (instance? ast/fn-ast ast))))
                 (remove (partial instance? ast/inline-ast))
                 eval-def
-                (flat-map (fn [exprs] 
+                (flat-map (fn [exprs]
                             (either (and (empty? exprs)
                                          (maybe (zero sm/state-maybe)))
                                     (record-defintion (reduce exprs '_ (fn [_ x] x)) sym)))))
-            (sm/get-in-val [.syms sym])
+            (lookup-sym sym)
             (sm/new-sm (fn [s]
                          (print-err (str "'" sym) sym)
                          ;; (print-err "Could not evaluate definition for " (str "'" sym "'") "at:"
@@ -167,7 +221,7 @@
                       (or (.fn-sym x)
                           (maybe "")))
                  (fn [fn-sym]
-                   (eval* (untag fn-sym))
+                   (lookup-sym fn-sym)
                    ;; (comp (sm/get-in-val [.syms (untag fn-sym)]
                    ;;       (sm/new-sm (fn [s]
                    ;;                    (print-err "Could not define function" (str "'" fn-sym "'") "at:"
@@ -189,7 +243,7 @@
                                    (<= (-> arity .params .fixed count) num-args)
                                    (maybe arity)))))]
       (for [arity (sm/when arity)
-            syms (sm/get-val .syms)
+            syms (get-syms)
             _ (bind (.params arity) args)
             :let [body (.body arity)
                   assertions (filter body (partial instance? ast/assert-ast))
@@ -197,7 +251,7 @@
                   body (filter body (partial instance? ast/CodeAST))]
             :when-not (empty? body)
             results (eval* body)
-            _ (sm/set-val .syms syms)]
+            _ (set-syms syms)]
         (reduce results '_ (fn [_ x] x)))))
 
   (eval* [x]
@@ -224,14 +278,17 @@
                                (or (map v? (fn [v] [v s]))
                                    ((eval* (.alt x)) s)))))))))
 
-(deftype ProtoDispatcher [prototype-name]
+(deftype ProtoDispatcher [prototype-name path]
   (assert (instance? Symbol prototype-name))
-  
+
   Stringable
   (string-list [_]
-    (list "<ProtoDispatcher " (str prototype-name) ">"))
+    (list "<ProtoDispatcher " (str prototype-name) " " (str "'" path "'") ">"))
 
   Evaluator
+  (dispatcher-path [_]
+    path)
+
   (eval* [x]
     (sm/state-maybe x))
 
@@ -240,65 +297,61 @@
           [disp-arg & args] args
           disp-type (either (map (instance? ReifiedValue disp-arg) .type-num)
                             (get-type disp-arg))]
-      (for [impl (comp (sm/get-in-val [.implementations prototype-name num-args disp-type])
-                       (sm/get-in-val [.implementations prototype-name num-args 0]))
-            syms (sm/get-val .syms)
+      (for [impl (comp (sm/get-in-val [.ns path .impls prototype-name num-args disp-type])
+                       (sm/get-in-val [.ns path .impls prototype-name num-args 0]))
+            syms (get-syms)
             _ (bind-fields disp-arg)
             r (apply-fn impl (cons disp-arg args))
-            _ (sm/set-val .syms syms)]
+            _ (set-syms syms)]
         r))))
+
+(defn default-impl [fn-sym]
+  (fn [disp-arg & args]
+    (let [type-str (either
+                    (and (instance? ReifiedValue disp-arg)
+                         (or (.type-sym disp-arg)
+                             (maybe (.type-num disp-arg))))
+                    (type-name disp-arg))]
+      (print-err "Could not find implementation of"
+                 (str "'" fn-sym "'") "with"
+                 (inc (count args))
+                 "arguments for type"
+                 (str type-str ".")))
+    (abort)))
 
 (extend-type ast/protocol-ast
   Evaluator
   (eval* [x]
-    (for [_ (sm/new-sm (fn [s]
-                         (either (and (get-in s [.protocols (.protocol-sym x)])
-                                      (do
-                                        (print-err "Trying to redefine a protocol named"
-                                                   (str "'" (.protocol-sym x) "'") "at"
-                                                   (ast-location-str x))
-                                        (maybe nothing)))
-                                 (maybe ['_ s]))))
-          _ (traverse (.prototypes x)
-                      (fn [prototype]
-                        (assert (instance? ast/prototype-ast prototype))
+    (let [proto-sym (.protocol-sym x)]
+      (for [_ (new-protocol proto-sym)
+            curr-file-name (sm/get-val .file-name)
+            _ (traverse (.prototypes x)
+                        (fn [prototype]
+                          (assert (instance? ast/prototype-ast prototype))
 
-                        (let [fn-sym (untag (.fn-name prototype))
-                              params (.params prototype)
-                              num-args (count params)]
-                          (comp (for [_ (sm/get-in-val [.implementations fn-sym num-args 0])]
-                                  (print-err "Attempt to redefine protocol function" (str "'" fn-sym "'")
-                                             "at" (ast-location-str x)
-                                             "failed. Kept existing definition."))
-                                (for [_ (sm/assoc-in-val [.protocols (.protocol-sym x) fn-sym params] prototype)
-                                      _ (comp (eval* fn-sym)
-                                              (bind fn-sym (ProtoDispatcher fn-sym)))
-                                      _ (either (-> (.default-body prototype)
-                                                    (filter (partial instance? ast/CodeAST))
-                                                    (empty?)
-                                                    (map (fn [_]
-                                                           (sm/assoc-in-val
-                                                            [.implementations fn-sym num-args 0]
-                                                            (fn [disp-arg & args]
-                                                              (let [type-str (either
-                                                                              (and (instance? ReifiedValue disp-arg)
-                                                                                   (or (.type-sym disp-arg)
-                                                                                       (maybe (.type-num disp-arg))))
-                                                                              (type-name disp-arg))]
-                                                                (print-err "Could not find implementation of"
-                                                                           (str "'" fn-sym "'") "with"
-                                                                           (inc (count args))
-                                                                           "arguments for type"
-                                                                           (str type-str ".")))
-                                                              (abort))))))
-                                                (flat-map (eval-def (ast/fn-ast
-                                                                     (maybe fn-sym)
-                                                                     [(ast/fn-arity-ast fn-sym "" params ""
-                                                                                        (.default-body prototype))]))
-                                                          (partial sm/assoc-in-val [.implementations fn-sym
-                                                                                    num-args 0])))]
-                                  '_)))))]
-      '_)))
+                          (let [fn-sym (untag (.fn-name prototype))
+                                params (.params prototype)
+                                num-args (count params)]
+                            (comp (for [_ (get-impl fn-sym num-args 0)]
+                                    (print-err "Attempt to redefine protocol function" (str "'" fn-sym "'")
+                                               "at" (ast-location-str x)
+                                               "failed. Kept existing definition."))
+                                  (for [_ (set-prototype proto-sym fn-sym params prototype)
+                                        _ (comp (lookup-sym fn-sym)
+                                                (bind fn-sym (ProtoDispatcher fn-sym curr-file-name)))
+                                        _ (either (-> (.default-body prototype)
+                                                      (filter (partial instance? ast/CodeAST))
+                                                      (empty?)
+                                                      (map (fn [_]
+                                                             (set-impl fn-sym num-args 0
+                                                                       (default-impl (untag fn-sym))))))
+                                                  (flat-map (eval-def (ast/fn-ast
+                                                                       (maybe fn-sym)
+                                                                       [(ast/fn-arity-ast fn-sym "" params ""
+                                                                                          (.default-body prototype))]))
+                                                            (partial set-impl fn-sym num-args 0)))]
+                                    '_)))))]
+        '_))))
 
 (defn wrap-arity [fn-arity]
   (inline C "
@@ -308,42 +361,40 @@
    f->arities[0] = arity;
    return((Value *)f);"))
 
+;; _ (comp (get-protocol protocol)
+;;                             (sm/new-sm (fn [s]
+;;                                          (print-err "Invalid protocol" (str "'" protocol "'")
+;;                                                     "at" location)
+;;                                          nothing)))
+
 (defn reify-impls [impls type-num location]
   (traverse (seq impls)
             (fn [[protocol proto-impls]]
-              (for [_ (comp (sm/get-in-val [.protocols protocol])
-                            (sm/new-sm (fn [s]
-                                         (print-err "Invalid protocol" (str "'" protocol "'")
-                                                    "at" location)
-                                         nothing)))
-                    _ (traverse (for [[fn-sym arities] (seq proto-impls)
-                                      arity arities]
-                                  [(untag fn-sym) arity])
-                                (fn [[fn-sym arity]]
-                                  (let [num-args (count (.params arity))]
-                                    (comp (sm/get-in-val [.implementations fn-sym num-args type-num])
-                                          (for [impl (either (and (some (.body arity)
-                                                                        (partial instance? ast/inline-ast))
-                                                                  (maybe
-                                                                   (map (sm/get-in-val [.core-protocols protocol
-                                                                                        fn-sym num-args type-num])
-                                                                        wrap-arity)))
-                                                             (for [new-arity (eval-def arity)]
-                                                               (ast/fn-ast (maybe fn-sym) [new-arity])))
-                                                _ (comp (for [_ (sm/get-in-val [.implementations fn-sym num-args 0])
-                                                              - (sm/assoc-in-val [.implementations fn-sym
-                                                                                  num-args type-num]
-                                                                                 impl)]
-                                                          '_)
-                                                        (for [disp-fn (eval* fn-sym)
-                                                              _ (bind fn-sym (ProtoDispatcher fn-sym))
-                                                              - (sm/assoc-in-val
-                                                                 [.implementations fn-sym num-args]
-                                                                 {0 disp-fn
-                                                                  type-num impl})]
-                                                          '_))]
-                                            '_)))))]
-                '_))))
+              (traverse (for [[fn-sym arities] (seq proto-impls)
+                              arity arities]
+                          [fn-sym arity])
+                        (fn [[fn-sym arity]]
+                          (let [num-args (count (.params arity))]
+                            (comp (get-impl fn-sym num-args type-num)
+                                  (for [impl (either (and (some (.body arity)
+                                                                (partial instance? ast/inline-ast))
+                                                          (maybe
+                                                           (map (sm/get-in-val [.core-protocols protocol
+                                                                                (untag fn-sym) num-args
+                                                                                type-num])
+                                                                wrap-arity)))
+                                                     (for [new-arity (eval-def arity)]
+                                                       (ast/fn-ast (maybe fn-sym) [new-arity])))
+                                        _ (comp (for [_ (get-impl fn-sym num-args 0)
+                                                      _ (set-impl fn-sym num-args type-num impl)]
+                                                  '_)
+                                                (for [disp-fn (eval* fn-sym)
+                                                      curr-file-name (sm/get-val .file-name)
+                                                      _ (bind fn-sym (ProtoDispatcher fn-sym curr-file-name))
+                                                      _ (set-impl fn-sym num-args 0 disp-fn)
+                                                      _ (set-impl fn-sym num-args type-num impl)]
+                                                  '_))]
+                                    '_))))))))
 
 (extend-type ast/reify-ast
   Evaluator
@@ -392,7 +443,7 @@
   (eval-def [x]
     (map (eval-def (.clauses x))
          (partial .clauses x)))
-  
+
   (eval* [x]
     (sm/new-sm (fn [s]
                  (let [[clause & clauses] (.clauses x)]
@@ -408,7 +459,7 @@
   (eval-def [x]
     (map (eval-def (.clauses x))
          (partial .clauses x)))
-  
+
   (eval* [x]
     (sm/new-sm (fn [s]
                  (let [[clause & clauses] (.clauses x)]
@@ -464,7 +515,7 @@
     (for [new-bindings (eval-def (.bindings x))
           new-body (eval-def (.body x))]
       (ast/let-ast new-bindings new-body)))
-  
+
   (eval* [x]
     (for [curr-state (sm/new-sm (fn [s] (maybe [s s])))
           results (eval* (comp (.bindings x) (.body x)))
@@ -505,22 +556,22 @@
                   const-type (inc type-num)]
             _ (sm/assoc-in-val [.type-nums] (comp type-nums {(.sym x) {type-num #{}}
                                                              const-type {const-type #{}}}))
-            _ (sm/assoc-in-val [.implementations 'string-list 1 const-type]
-                               (fn [c]
-                                 (list (str (either (.type-sym c) (.type-num c))))))
-            _ (sm/assoc-in-val [.implementations 'invoke (inc num-fields) const-type]
-                               (fn [_ & fields]
-                                 (ReifiedValue (maybe (.sym x)) type-num (vec fields) (.fields x))))
-            _ (sm/assoc-in-val [.implementations 'instance? 2 const-type]
-                               (fn [constructor v]
-                                 (and (= type-num (either (map (instance? ReifiedValue v) .type-num)
-                                                          (get-type v)))
-                                      (maybe v))))
+            _ (set-impl 'string-list 1 const-type
+                        (fn [c]
+                          (list (str (either (.type-sym c) (.type-num c))))))
+            _ (set-impl 'invoke (inc num-fields) const-type
+                        (fn [_ & fields]
+                          (ReifiedValue (maybe (.sym x)) type-num (vec fields) (.fields x))))
+            _ (set-impl 'instance? 2 const-type
+                        (fn [constructor v]
+                          (and (= type-num (either (map (instance? ReifiedValue v) .type-num)
+                                                   (get-type v)))
+                               (maybe v))))
             _ (bind sym (ReifiedValue (-> (str "*" sym " constructor*") symbol maybe)
                                       const-type [] []))
             _ (traverse (remove (.impls x) (partial instance? ast/assert-ast))
-                         (fn [impls]
-                           (reify-impls impls type-num (ast-location-str x))))]
+                        (fn [impls]
+                          (reify-impls impls type-num (ast-location-str x))))]
         '_))))
 
 (extend-type ast/main-ast
@@ -547,15 +598,139 @@
 
 (extend-type Symbol
   Evaluator
-  (bind [sym v]
-    (sm/assoc-in-val [.syms sym] v))
+  (lookup-sym [x]
+    (comp (flat-map (sm/get-val .file-name)
+                    (fn [ns-path]
+                      (sm/get-in-val [.ns ns-path .syms x])))
+          (sm/get-in-val [.ns "" .syms x])))
 
-  (eval-def [x]
-    (comp (sm/get-in-val [.syms x])
-          (sm/state-maybe x)))
+  (bind [sym v]
+    (flat-map (sm/get-val .file-name)
+              (fn [ns-path]
+                (sm/assoc-in-val [.ns ns-path .syms sym] v))))
+
+  (new-protocol [sym]
+    (sm/new-sm (fn [s]
+                 (either (and (or (get-in s [.ns (.file-name s) .syms sym])
+                                  (get-in s [.ns "" .syms sym]))
+                              (do
+                                (print-err "Trying to redefine a protocol named"
+                                           (str "'" sym "'"))
+                                (maybe nothing)))
+                         (maybe ['_ s])))))
+
+  (get-protocol [sym]
+    (sm/new-sm (fn [s]
+                 (either (map (or (get-in s [.ns (.file-name s) .syms sym])
+                                  (get-in s [.ns "" .syms sym]))
+                              (fn [proto]
+                                (maybe [proto s])))
+                         nothing))))
+
+  (set-prototype [sym fn-sym params proto]
+    (flat-map (comp (map (sm/get-in-val [.ns "" .syms sym])
+                         (fn [_] ""))
+                    (sm/get-val .file-name))
+              (fn [curr-file-name]
+                (sm/assoc-in-val [.ns curr-file-name .syms sym fn-sym params] proto))))
+
+  (get-impl [sym num-args type-num]
+    (flat-map (lookup-sym sym)
+              (fn [dispatcher]
+                (sm/get-in-val [.ns (dispatcher-path dispatcher) .impls sym num-args type-num]))))
+
+  (set-impl [sym num-args type-num impl]
+    (flat-map (comp (map (sm/get-in-val [.ns "" .impls sym num-args])
+                         (fn [_] ""))
+                    (sm/get-val .file-name))
+              (fn [ns-path]
+                (sm/assoc-in-val [.ns ns-path .impls sym num-args type-num] impl))))
 
   (eval* [x]
-    (sm/get-in-val [.syms x])))
+    (comp (lookup-sym x)
+          (sm/new-sm (fn [s]
+                       (print-err "There is no value bound to" (str "'" x "'."))
+                       ;; TODO: put an abort in here and see what happens
+                       nothing))))
+
+  (eval-def [x]
+    (comp (lookup-sym x)
+          (sm/state-maybe x))))
+
+(extend-type rdr/tagged-symbol
+  Evaluator
+  (lookup-sym [x]
+    (either (map (.ns x)
+                 (fn [ns-sym]
+                   (for [curr-file (sm/get-val .file-name)
+                         r (sm/get-in-val [.ns curr-file .imports (untag ns-sym) (untag (.base x))])]
+                     r)))
+            (comp (flat-map (sm/get-val .file-name)
+                            (fn [ns-path]
+                              (sm/get-in-val [.ns ns-path .syms (untag x)])))
+                  (sm/get-in-val [.ns "" .syms (untag x)]))))
+
+  (new-protocol [sym]
+    (sm/new-sm (fn [s]
+                 (either (and (or (get-in s [.ns (.file-name s) .syms sym])
+                                  (get-in s [.ns "" .syms sym]))
+                              (do
+                                (print-err "Trying to redefine a protocol named"
+                                           (str "'" sym "'"))
+                                (maybe nothing)))
+                         (maybe ['_ s])))))
+
+  (get-protocol [sym]
+    (sm/new-sm (fn [s]
+                 (either (map (or (get-in s [.ns (.file-name s) .syms (untag sym)])
+                                  (get-in s [.ns "" .syms (untag sym)]))
+                              (fn [proto]
+                                (maybe [proto s])))
+                         nothing))))
+
+  (set-prototype [sym fn-sym params proto]
+    (flat-map (sm/get-val .file-name)
+              (fn [curr-file-name]
+                (sm/assoc-in-val [.ns curr-file-name .syms (untag (.base sym)) (untag fn-sym) params]
+                                 proto))))
+
+  (untag [x]
+    (either (map (.ns x)
+                 (fn [ns]
+                   (symbol (str ns "/" (.base x)))))
+            (.base x)))
+
+  (eval-def [x]
+    (comp (lookup-sym x)
+          (sm/state-maybe (untag x))))
+
+  (bind [x v]
+    (either (and (.ns x)
+                 (do
+                   (print-err "A value can not be bound to a namespace-qualified symbol. At"
+                              (str "'" (ast/file-name x) "',") (ast/line-number x))
+                   (zero sm/state-maybe)))
+            (bind (untag x) v)))
+
+  (get-impl [sym num-args type-num]
+    (flat-map (lookup-sym sym)
+              (fn [dispatcher]
+                (sm/get-in-val [.ns (dispatcher-path dispatcher) .impls (untag (.base sym))
+                                num-args type-num]))))
+
+  (set-impl [sym num-args type-num impl]
+    (flat-map (lookup-sym sym)
+              (fn [dispatcher]
+                (sm/assoc-in-val [.ns (dispatcher-path dispatcher) .impls
+                                  (untag (.base sym)) num-args type-num]
+                                 impl))))
+
+  (eval* [x]
+    (comp (lookup-sym x)
+          (sm/new-sm (fn [s]
+                       (print-err "There is no value bound to" (str "'" x "' at")
+                                  (ast-location-str x))
+                       nothing)))))
 
 (extend-type Maybe
   Evaluator
@@ -581,7 +756,7 @@
   (eval* [x]
     (sm/state-maybe x)))
 
-(extend-type Function
+(extend-type Fn
   Evaluator
   (eval* [f]
     (sm/state-maybe f))
@@ -595,25 +770,40 @@
   (eval* [x]
     (sm/state-maybe "")))
 
-;; (extend-type ast/inline-ast
-;;     Evaluator
-;;     (eval* [x]
-;;       (zero sm/state-maybe)))
+(extend-type ast/module-ast
+  Evaluator
+  (eval* [x]
+    (let [file (.file-path x)]
+      ;; TODO: check to see if module has already been loaded
+      (for [asts (sm/when (for [file-in (fio/file-in file)
+                                asts (parse {'file-name file
+                                             'line-number 1}
+                                            (lazy-list file-in))]
+                            asts))
+            _ (sm/set-val .file-name file)
+            _ (sm/assoc-in-val [.ns file] (EvalNamespace {} {} {}))
+            _ (eval* asts)]
+        file))))
 
-;; (extend-type ast/module-ast
-;;   Evaluator
-;;   (eval* [x]
-;;     ))
+(extend-type ast/add-ns-ast
+  Evaluator
+  (eval* [x]
+    (for [curr-file (sm/get-val .file-name)
+          mod-file (eval* (.mod x))
+          mod-syms (sm/get-in-val [.ns mod-file .syms])
+          _ (sm/assoc-in-val [.ns curr-file .imports (untag (.ns-sym x))] mod-syms)
+          _ (sm/set-val .file-name curr-file)]
+      '_)))
 
 ;; (extend-type ast/git-dep-ast
 ;;   Evaluator
 ;;   (eval* [x]
 ;;     ))
 
-;; (extend-type ast/add-ns-ast
-;;   Evaluator
-;;   (eval* [x]
-;;     ))
+;; (extend-type ast/inline-ast
+;;     Evaluator
+;;     (eval* [x]
+;;       (zero sm/state-maybe)))
 
 ;; (extend-type ast/declaration-ast
 ;;   Evaluator

@@ -18,34 +18,16 @@
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "c89ab00"))
-
-(extend-type rdr/tagged-symbol
-  ev/Evaluator
-  (ev/untag [x]
-    (either (map (.ns x)
-                 (fn [ns]
-                   (symbol (str ns "/" (.base x)))))
-            (.base x)))
-
-  (ev/eval-def [x]
-    (ev/eval-def (ev/untag x)))
-
-  (ev/bind [x v]
-    (ev/bind (ev/untag x) v))
-
-  (ev/eval* [x]
-    (ev/eval* (ev/untag x))))
-
-(def parse (rd/parser (grmr/none-or-more
-                       (grmr/any rdr/read-def
-                                 rdr/read-defn
-                                 rdr/read-defprotocol
-                                 rdr/read-main
-                                 rdr/read-extend-type
-                                 rdr/read-deftype
-                                 rdr/read-block-comment
-                                 ;; rdr/read-add-ns
-                                 rdr/read-expr))))
+(add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
+                            "system.toc"
+                            :sha "40c1c4d"))
+(def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
+                                    (fn [toc-dir]
+                                      (str toc-dir "/core.toc")))
+                               (do
+                                 (print-err "Could not read environnment variable"
+                                            "TOCCATA_DIR")
+                                 (abort)))))
 
 (def IntegerType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IntegerType};"))
 (def StringBufferType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StringBufferType};"))
@@ -71,7 +53,7 @@
                 'StringBuffer {StringBufferType #{}}
                 'SubString {SubStringType #{}}
                 'FnArity {FnArityType #{}}
-                'Function {FunctionType #{}}
+                'Fn {FunctionType #{}}
                 'List {ListType #{}}
                 'Maybe {MaybeType #{}}
                 'Vector {VectorType #{}}
@@ -171,7 +153,7 @@
                        (sm/state-maybe x))
 
                      (ev/apply-fn [_ [mf mvs]]
-                       (either (for [_ (or (instance? Function mf)
+                       (either (for [_ (or (instance? Fn mf)
                                            (instance? ast/fn-ast mf))
                                      args-seq (or (empty? mvs)
                                                   (last mvs))]
@@ -257,11 +239,11 @@
                         (instance? [_ x]
                           (and (=* VectorType (get-type x))
                                (maybe x))))
-              'Function (reify
-                          Type
-                          (instance? [_ x]
-                            (and (=* FunctionType (get-type x))
-                                 (maybe x))))
+              'Fn (reify
+                    Type
+                    (instance? [_ x]
+                      (and (=* FunctionType (get-type x))
+                           (maybe x))))
               'Promise (reify
                          Type
                          (instance? [_ x]
@@ -289,41 +271,28 @@
               'int= =*
               })
 
-(def implementations {})
-
-(def eval-state (ev/EvalState symbols {} type-nums {} implementations core-protocols))
+(def eval-state (ev/EvalState {"" (ev/EvalNamespace {} symbols {})}
+                              {} type-nums core-protocols ""))
 
 (defn interp-file [state file]
   (println file)
   (or (for [file-in (fio/file-in file)
-            asts (parse {'file-name file
-                         'line-number 1}
-                        (lazy-list file-in))
-            [result _] (ev/eval asts state)
+            asts (ev/parse {'file-name file
+                            'line-number 1}
+                           (lazy-list file-in))
+            [result _] (ev/eval asts (-> state
+                                         (assoc-in [.ns file] (ev/EvalNamespace {} {} {}))
+                                         (.file-name file)))
             result (last result)]
         (println "\nresult:" result "\n"))
       (maybe (print-err "FAIL!!!\n"))))
 
 (main [[_ & files]]
-  (for [file-in (fio/file-in "core.toc")
-        asts (parse {'file-name 'core
-                     'line-number 1}
-                    (lazy-list file-in))
-        [_ state] (ev/eval asts eval-state)
-;;         asts (parse {'file-name "test7.toc"
-;;                      'line-number 1}
-;;                     "
-;; (main [_]
-;;   (println \"Howdy,\" \"Boyz!\" 99))
-
-;; (deftype NT [a b c]
-;;   Stringable
-;;   (string-list [_]
-;;       (list \"<NT \" (str a) \" \" (str b) \" \" (str c \">\"))))
-
-;; (str (NT 1 2 3))
-;; ")
-        ]
+  (for [file-in (fio/file-in path-to-core)
+        asts (ev/parse {'file-name path-to-core
+                        'line-number 1}
+                       (lazy-list file-in))
+        [_ state] (ev/eval asts eval-state)]
     (do
       (map files (partial interp-file state))
       (println 'done))))
