@@ -17,6 +17,9 @@
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
                             :sha "4893cbf"))
+(add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
+                            "system.toc"
+                            :sha "40c1c4d"))
 
 
 (def parse (rd/parser (grmr/none-or-more
@@ -73,7 +76,7 @@
   (eval* [x]
     (assert-result r (instance? sm/state-maybe r))
     (sm/new-sm (fn [s]
-                 (print-err "Could not find implementation of 'eval*' for" (str "''" (type-name x) "'"))
+                 (print-err "Could not find implementation of 'eval*' for" (str "'" (type-name x) "'"))
                  nothing)))
 
   (eval-def [x]
@@ -128,7 +131,9 @@
     (sm/state-maybe x))
 
   (bind-fields [_]
-    (bind field-names fields))
+    (either (and (empty? fields)
+                 (maybe (sm/state-maybe '_)))
+            (bind field-names fields)))
 
   (apply-fn [disp-arg args]
     (let [num-args (inc (count args))]
@@ -248,7 +253,10 @@
             :let [body (.body arity)
                   assertions (filter body (partial instance? ast/assert-ast))
                   result-asserts (filter body (partial instance? ast/result-ast))
-                  body (filter body (partial instance? ast/CodeAST))]
+                  body (filter body (fn [ast]
+                                      (or (instance? ast/CodeAST ast)
+                                          (instance? rdr/tagged-symbol ast)
+                                          (instance? ast/fn-ast ast))))]
             :when-not (empty? body)
             results (eval* body)
             _ (set-syms syms)]
@@ -340,7 +348,10 @@
                                         _ (comp (lookup-sym fn-sym)
                                                 (bind fn-sym (ProtoDispatcher fn-sym curr-file-name)))
                                         _ (either (-> (.default-body prototype)
-                                                      (filter (partial instance? ast/CodeAST))
+                                                      (filter (fn [ast]
+                                                                (or (instance? ast/CodeAST ast)
+                                                                    (instance? rdr/tagged-symbol ast)
+                                                                    (instance? ast/fn-ast ast))))
                                                       (empty?)
                                                       (map (fn [_]
                                                              (set-impl fn-sym num-args 0
@@ -654,8 +665,9 @@
                        nothing))))
 
   (eval-def [x]
-    (comp (lookup-sym x)
-          (sm/state-maybe x))))
+    (either (map (= x 'nothing) sm/state-maybe)
+            (comp (lookup-sym x)
+                  (sm/state-maybe x)))))
 
 (extend-type rdr/tagged-symbol
   Evaluator
@@ -701,8 +713,9 @@
             (.base x)))
 
   (eval-def [x]
-    (comp (lookup-sym x)
-          (sm/state-maybe (untag x))))
+    (either (map (= x 'nothing) sm/state-maybe)
+            (comp (lookup-sym x)
+                  (sm/state-maybe x))))
 
   (bind [x v]
     (either (and (.ns x)
@@ -721,8 +734,7 @@
   (set-impl [sym num-args type-num impl]
     (flat-map (lookup-sym sym)
               (fn [dispatcher]
-                (sm/assoc-in-val [.ns (dispatcher-path dispatcher) .impls
-                                  (untag (.base sym)) num-args type-num]
+                (sm/assoc-in-val [.ns (dispatcher-path dispatcher) .impls (untag (.base sym)) num-args type-num]
                                  impl))))
 
   (eval* [x]
@@ -770,20 +782,38 @@
   (eval* [x]
     (sm/state-maybe "")))
 
+(defn file-directory [src-file-name]
+  (map (sys/realpath src-file-name)
+       (fn [real-path]
+         (let [[path-len] (reduce real-path [-1 0]
+                                  (fn [[slash-pos c-pos] c]
+                                    (let [c-pos (inc c-pos)]
+                                      ((= c "/")
+                                       [c-pos c-pos]
+                                       [slash-pos c-pos]))))]
+           (subs real-path 0 path-len)))))
+
 (extend-type ast/module-ast
   Evaluator
   (eval* [x]
     (let [file (.file-path x)]
       ;; TODO: check to see if module has already been loaded
-      (for [asts (sm/when (for [file-in (fio/file-in file)
-                                asts (parse {'file-name file
-                                             'line-number 1}
-                                            (lazy-list file-in))]
-                            asts))
-            _ (sm/set-val .file-name file)
-            _ (sm/assoc-in-val [.ns file] (EvalNamespace {} {} {}))
-            _ (eval* asts)]
-        file))))
+      (comp
+            (for [curr-file-name (sm/get-val .file-name)
+                  curr-file-path (sm/when (file-directory curr-file-name))
+                  :let [file (str curr-file-path file)]
+                  _ (comp (sm/get-in-val [.ns file])
+                          (for [_ (debug 'loading-module file)
+                                asts (sm/when (for [file-in (fio/file-in file)
+                                                    asts (parse {'file-name file
+                                                                 'line-number 1}
+                                                                (lazy-list file-in))]
+                                                asts))
+                                _ (sm/set-val .file-name file)
+                                _ (sm/assoc-in-val [.ns file] (EvalNamespace {} {} {}))
+                                _ (eval* asts)]
+                            '_))]
+              file)))))
 
 (extend-type ast/add-ns-ast
   Evaluator
@@ -795,17 +825,7 @@
           _ (sm/set-val .file-name curr-file)]
       '_)))
 
-;; (extend-type ast/git-dep-ast
-;;   Evaluator
-;;   (eval* [x]
-;;     ))
-
-;; (extend-type ast/inline-ast
-;;     Evaluator
-;;     (eval* [x]
-;;       (zero sm/state-maybe)))
-
-;; (extend-type ast/declaration-ast
-;;   Evaluator
-;;   (eval* [x]
-;;     ))
+(extend-type ast/declaration-ast
+  Evaluator
+  (eval* [x]
+    (sm/state-maybe '_)))
