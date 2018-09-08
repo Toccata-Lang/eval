@@ -79,7 +79,7 @@
 
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "c89ab00"))
+                           :sha "24aaaee"))
 
 (def parse (rd/parser (grmr/none-or-more
                        (grmr/any rdr/read-def

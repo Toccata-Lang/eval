@@ -1,26 +1,27 @@
 
 (add-ns ev (module "eval.toc"))
-(add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
-                            "file-io.toc"
-                            :sha "e7a489b"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "4893cbf"))
-(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
-                            "ast.toc"
-                            :sha "ba18227"))
-(add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
-                           "state-maybe.toc"
-                           :sha "ecde30b"))
-(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
-                             "grammar.toc"
-                             :sha "7690cd3"))
+                            :sha "8e5fd43"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "c89ab00"))
+                           :sha "83cc570"))
+(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
+                             "grammar.toc"
+                             :sha "1653d24"))
 (add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
                             "system.toc"
                             :sha "40c1c4d"))
+(add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
+                           "state-maybe.toc"
+                           :sha "93614d5"))
+(add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
+                            "file-io.toc"
+                            :sha "e7a489b"))
+(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
+                            "ast.toc"
+                            :sha "41e5ca6"))
+
 (def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
                                     (fn [toc-dir]
                                       (str toc-dir "/core.toc")))
@@ -39,32 +40,14 @@
 (def VectorType (inline C Integer "(Value *)&(Integer){IntegerType, -1, VectorType};"))
 (def VectorNodeType (inline C Integer "(Value *)&(Integer){IntegerType, -1, VectorNodeType};"))
 (def SymbolType (inline C Integer "(Value *)&(Integer){IntegerType, -1, SymbolType};"))
-(def BitmapIndexedType
-  (inline C Integer "(Value *)&(Integer){IntegerType, -1, BitmapIndexedType};"))
+(def BitmapIndexedType (inline C Integer "(Value *)&(Integer){IntegerType, -1, BitmapIndexedType};"))
 (def ArrayNodeType (inline C Integer "(Value *)&(Integer){IntegerType, -1, ArrayNodeType};"))
-(def HashCollisionNodeType
-  (inline C Integer "(Value *)&(Integer){IntegerType, -1, HashCollisionNodeType};"))
+(def HashCollisionNodeType (inline C Integer "(Value *)&(Integer){IntegerType, -1, HashCollisionNodeType};"))
 (def PromiseType (inline C Integer "(Value *)&(Integer){IntegerType, -1, PromiseType};"))
 (def FutureType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FutureType};"))
 (def AgentType (inline C Integer "(Value *)&(Integer){IntegerType, -1, AgentType};"))
 (def OpaqueType (inline C Integer "(Value *)&(Integer){IntegerType, -1, OpaqueType};"))
-
-(def type-nums {'Integer {IntegerType #{}}
-                'StringBuffer {StringBufferType #{}}
-                'SubString {SubStringType #{}}
-                'FnArity {FnArityType #{}}
-                'Fn {FunctionType #{}}
-                'List {ListType #{}}
-                'Maybe {MaybeType #{}}
-                'Vector {VectorType #{}}
-                'Symbol {SymbolType #{}}
-                'BitmapIndexedNode {BitmapIndexedType #{}}
-                'ArrayNode {ArrayNodeType #{}}
-                'HashCollisionNode {HashCollisionNodeType #{}}
-                'Promise {PromiseType #{}}
-                'Future {FutureType #{}}
-                'Agent {AgentType #{}}
-                'Opaque {OpaqueType #{}}})
+(def CoreTypeCount (inline C Integer "(Value *)&(Integer){IntegerType, -1, TypeCount};"))
 
 (def interp-list-map (reify
                        Stringable
@@ -80,8 +63,10 @@
                          (sm/state-maybe x))
 
                        (ev/apply-fn [_ [l f]]
-                         (ev/traverse (reverse l) (fn [x]
-                                                    (ev/apply-fn f (list x)))))))
+                         (assert (instance? List l))
+
+                         (ev/traverse l (fn [x]
+                                          (ev/apply-fn f (list x)))))))
 
 (def interp-maybe-map (reify
                         Stringable
@@ -101,27 +86,6 @@
                                             (map (ev/apply-fn f (list x))
                                                  maybe)))
                                   (sm/state-maybe nothing)))))
-
-(def interp-maybe-apply (reify
-                          Stringable
-                          (string-list [_]
-                            (list "interp-maybe-apply"))
-
-                          Eq
-                          (=* [x y]
-                            nothing)
-
-                          ev/Evaluator
-                          (ev/eval* [x]
-                            (sm/state-maybe x))
-
-                          (ev/apply-fn [_ [mf mvs]]
-                            (either (apply* (map mf (fn [f]
-                                                      (fn [& args]
-                                                        (map (ev/apply-fn f args)
-                                                             maybe))))
-                                            mvs)
-                                    (sm/state-maybe nothing)))))
 
 (def interp-abort (reify
                     Stringable
@@ -153,28 +117,151 @@
                        (sm/state-maybe x))
 
                      (ev/apply-fn [_ [mf mvs]]
-                       (either (for [_ (or (instance? Fn mf)
-                                           (instance? ast/fn-ast mf))
-                                     args-seq (or (empty? mvs)
-                                                  (last mvs))]
-                                 (let [args-prefix (butlast mvs)]
-                                   (either (and (instance? Sequence args-seq)
-                                                (maybe (for [target (ev/eval* mf)
-                                                             args (ev/eval* (comp args-prefix args-seq))
-                                                             r (ev/apply-fn target args)]
-                                                         r)))
-                                           (do
-                                             (print-err "The final argument when using 'apply' on a function"
-                                                        "must be either a Vector or a List.")
-                                             (zero sm/state-maybe)))))
-                               (for [target (ev/eval* mf)
-                                     args (ev/eval* mvs)
-                                     r (ev/apply-fn target args)]
-                                 r)))))
+                       (ev/apply-fn mf mvs))))
+
+(def interp-filter-list (reify
+                          Stringable
+                          (string-list [_]
+                            (list "interp-filter-list"))
+
+                          Eq
+                          (=* [x y]
+                            nothing)
+
+                          ev/Evaluator
+                          (ev/eval* [x]
+                            (sm/state-maybe x))
+
+                          (ev/apply-fn [_ [l f]]
+                            (for [xs (ev/traverse l (fn [x]
+                                                      (ev/apply-fn f (list x))))]
+                              (seq (reduce xs []
+                                           (fn [vect x]
+                                             (either (map x (partial conj vect))
+                                                     vect))))))))
+
+(def interp-filter-vect (reify
+                          Stringable
+                          (string-list [_]
+                            (list "interp-filter-vect"))
+
+                          Eq
+                          (=* [x y]
+                            nothing)
+
+                          ev/Evaluator
+                          (ev/eval* [x]
+                            (sm/state-maybe x))
+
+                          (ev/apply-fn [_ [l f]]
+                            (for [xs (ev/traverse l (fn [x]
+                                                      (ev/apply-fn f (list x))))]
+                              (reduce xs []
+                                      (fn [vect x]
+                                        (either (map x (partial conj vect))
+                                                vect)))))))
+
+(def interp-assoc* (reify
+                     Stringable
+                     (string-list [_]
+                       (list "interp-assoc*"))
+
+                     Eq
+                     (=* [x y]
+                       nothing)
+
+                     ev/Evaluator
+                     (ev/eval* [x]
+                       (sm/state-maybe x))
+
+                     (ev/apply-fn [_ [m k v hash shift]]
+                       (for [new-k (ev/eval-key k)]
+                         (assoc* m new-k v hash shift)))))
+
+(def interp-dissoc (reify
+                     Stringable
+                     (string-list [_]
+                       (list "interp-dissoc"))
+
+                     Eq
+                     (=* [x y]
+                       nothing)
+
+                     ev/Evaluator
+                     (ev/eval* [x]
+                       (sm/state-maybe x))
+
+                     (ev/apply-fn [_ [m k]]
+                       (either (and (instance? HashMap m)
+                                    (do
+                                      (print-err 'dissoc k)
+                                      (maybe (for [new-k (ev/eval-key k)]
+                                               (dissoc m new-k)))))
+                               (sm/state-maybe (dissoc m k))))))
+
+(def interp-get (reify
+                  Stringable
+                  (string-list [_]
+                    (list "interp-get"))
+
+                  Eq
+                  (=* [x y]
+                    nothing)
+
+                  ev/Evaluator
+                  (ev/eval* [x]
+                    (sm/state-maybe x))
+
+                  (ev/apply-fn [_ [m k]]
+                    (for [new-k (ev/eval-key k)]
+                      (get m new-k)))))
+
+(def interp-get* (reify
+                   Stringable
+                   (string-list [_]
+                     (list "interp-get*"))
+
+                   Eq
+                   (=* [x y]
+                     nothing)
+
+                   ev/Evaluator
+                   (ev/eval* [x]
+                     (sm/state-maybe x))
+
+                   (ev/apply-fn [_ [m k v hash shift]]
+                     (for [new-k (ev/eval-key k)]
+                       (get* m new-k v hash shift)))))
+
+(defn list-reduce-loop [l result? f]
+  (either (for [x (first l)
+                new-result (map result? (fn [[result s]]
+                                          ((ev/apply-fn f (list result x)) s)))]
+            (list-reduce-loop (rest l) new-result f))
+          result?))
+
+(def interp-list-reduce (reify
+                          Stringable
+                          (string-list [_]
+                            (list "interp-list-reduce"))
+
+                          Eq
+                          (=* [x y]
+                            nothing)
+
+                          ev/Evaluator
+                          (ev/eval* [x]
+                            (sm/state-maybe x))
+
+                          (ev/apply-fn [_ [l result f]]
+                            (sm/new-sm (fn [s]
+                                         (list-reduce-loop l (maybe [result s]) f))))))
 
 (def symbols {'empty-list empty-list
               'empty-vector empty-vector
               'maybe maybe
+              'list* list*
+              'fn-apply fn-apply
               'nothing nothing
               'reified-type-args reified-type-args
               'reified-get-type reified-get-type
@@ -214,65 +301,69 @@
               'thread-id thread-id
               'deliver-future deliver-future
               'add-future-action add-future-action
-              'Integer (reify
-                         Type
-                         (instance? [_ x]
-                           (and (=* IntegerType (get-type x))
-                                (maybe x))))
-              'List (reify
-                      Type
-                      (instance? [_ x]
-                        (and (=* ListType (get-type x))
-                             (maybe x))))
-              'Maybe (reify
-                       Type
-                       (instance? [_ x]
-                         (and (=* MaybeType (get-type x))
-                              (maybe x))))
-              'Symbol (reify
-                        Type
-                        (instance? [_ x]
-                          (and (=* SymbolType (get-type x))
-                               (maybe x))))
-              'Vector (reify
-                        Type
-                        (instance? [_ x]
-                          (and (=* VectorType (get-type x))
-                               (maybe x))))
-              'Fn (reify
-                    Type
-                    (instance? [_ x]
-                      (and (=* FunctionType (get-type x))
-                           (maybe x))))
-              'Promise (reify
-                         Type
-                         (instance? [_ x]
-                           (and (=* PromiseType (get-type x))
-                                (maybe x))))
-              'Future (reify
-                        Type
-                        (instance? [_ x]
-                          (and (=* FutureType (get-type x))
-                               (maybe x))))
-              'Agent (reify
-                       Type
-                       (instance? [_ x]
-                         (and (=* AgentType (get-type x))
-                              (maybe x))))
 
-              'apply* interp-apply*
+              'Integer (ev/TypeMap {IntegerType #{}})
+              'StringBuffer (ev/TypeMap {StringBufferType #{}})
+              'SubString (ev/TypeMap {SubStringType #{}})
+              'FnArity (ev/TypeMap {FnArityType #{}})
+              'Fn (ev/TypeMap {FunctionType #{}})
+              'List (ev/TypeMap {ListType #{}})
+              'Maybe (ev/TypeMap {MaybeType #{}})
+              'Vector (ev/TypeMap {VectorType #{}})
+              'Symbol (ev/TypeMap {SymbolType #{}})
+              'BitmapIndexedNode (ev/TypeMap {BitmapIndexedType #{}})
+              'ArrayNode (ev/TypeMap {ArrayNodeType #{}})
+              'HashCollisionNode (ev/TypeMap {HashCollisionNodeType #{}})
+              'Promise (ev/TypeMap {PromiseType #{}})
+              'Future (ev/TypeMap {FutureType #{}})
+              'Agent (ev/TypeMap {AgentType #{}})
+              'Opaque (ev/TypeMap {OpaqueType #{}})
+              'instance? (ev/ProtoDispatcher (rdr/tag 'instance?) "")
+              'type-name (ev/ProtoDispatcher (rdr/tag 'type-name) "")
+              'get-type (ev/ProtoDispatcher (rdr/tag 'get-type) "")
+              'apply* (ev/ProtoDispatcher (rdr/tag 'apply*) "")
               'list-map interp-list-map
               'maybe-map interp-maybe-map
-              'maybe-apply interp-maybe-apply
               'abort interp-abort
+              'range range
 
               'integer-str str
               'add-ints add-numbers
               'int= =*
+              'bpre print-err
               })
 
-(def eval-state (ev/EvalState {"" (ev/EvalNamespace {} symbols {})}
-                              {} type-nums core-protocols ""))
+(def eval-state (ev/EvalState {"" (ev/EvalNamespace {} symbols 
+                                                    {'instance? {2
+                                                                 {0 instance?}}
+                                                     'get-type {1
+                                                                {0 get-type}}
+                                                     'type-name {1
+                                                                 {0 type-name}}
+                                                     'filter {2
+                                                              {ListType interp-filter-list
+                                                               VectorType interp-filter-vect}}
+                                                     'assoc* {5
+                                                              {BitmapIndexedType interp-assoc*
+                                                               HashCollisionNodeType interp-assoc*
+                                                               ArrayNodeType interp-assoc*}}
+                                                     'dissoc {2
+                                                             {BitmapIndexedType interp-dissoc
+                                                              HashCollisionNodeType interp-dissoc
+                                                              ArrayNodeType interp-dissoc}}
+                                                     'get {2
+                                                           {BitmapIndexedType interp-get
+                                                            HashCollisionNodeType interp-get
+                                                            ArrayNodeType interp-get}}
+                                                     'get* {5
+                                                            {BitmapIndexedType interp-get*
+                                                             HashCollisionNodeType interp-get*
+                                                             ArrayNodeType interp-get*}}
+                                                     'reduce {3
+                                                              {ListType interp-list-reduce}}
+                                                     'apply* {2
+                                                              {0 interp-apply*}}})}
+                              CoreTypeCount core-protocols "" 0))
 
 (defn interp-file [state file]
   (println file)
