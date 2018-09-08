@@ -24,12 +24,8 @@
 
 (def *max-call-depth* 500)
 
-(def shebang (grmr/ignore (grmr/all "#!"
-                                    (grmr/none-or-more rdr/not-eol)
-                                    rdr/newline)))
-
 (def parse (rd/parser
-            (grmr/all (grmr/optional shebang)
+            (grmr/all (grmr/optional rdr/shebang)
                       (grmr/none-or-more
                        (grmr/any rdr/read-def
                                  rdr/read-defn
