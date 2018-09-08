@@ -3,12 +3,6 @@
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
                             :sha "8e5fd43"))
-(add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
-                           "recursive-descent.toc"
-                           :sha "83cc570"))
-(add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
-                             "grammar.toc"
-                             :sha "1653d24"))
 (add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
                             "system.toc"
                             :sha "40c1c4d"))
@@ -18,9 +12,6 @@
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "e7a489b"))
-(add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
-                            "ast.toc"
-                            :sha "41e5ca6"))
 
 (def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
                                     (fn [toc-dir]
@@ -363,10 +354,9 @@
                                                               {ListType interp-list-reduce}}
                                                      'apply* {2
                                                               {0 interp-apply*}}})}
-                              CoreTypeCount core-protocols "" 0))
+                              CoreTypeCount core-protocols "" 0 empty-list))
 
 (defn interp-file [state file]
-  (println file)
   (or (for [file-in (fio/file-in file)
             asts (ev/parse {'file-name file
                             'line-number 1}
@@ -378,12 +368,10 @@
         (println "\nresult:" result "\n"))
       (maybe (print-err "FAIL!!!\n"))))
 
-(main [[_ & files]]
+(main [[_ script-file & args]]
   (for [file-in (fio/file-in path-to-core)
         asts (ev/parse {'file-name path-to-core
                         'line-number 1}
                        (lazy-list file-in))
-        [_ state] (ev/eval asts eval-state)]
-    (do
-      (map files (partial interp-file state))
-      (println 'done))))
+        [_ state] (ev/eval asts (.command-line eval-state (cons script-file args)))]
+    (interp-file state script-file)))

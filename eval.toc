@@ -24,7 +24,13 @@
 
 (def *max-call-depth* 500)
 
-(def parse (rd/parser (grmr/none-or-more
+(def shebang (grmr/ignore (grmr/all "#!"
+                                    (grmr/none-or-more rdr/not-eol)
+                                    rdr/newline)))
+
+(def parse (rd/parser
+            (grmr/all (grmr/optional shebang)
+                      (grmr/none-or-more
                        (grmr/any rdr/read-def
                                  rdr/read-defn
                                  rdr/read-defprotocol
@@ -33,7 +39,7 @@
                                  rdr/read-deftype
                                  rdr/read-block-comment
                                  rdr/read-add-ns
-                                 rdr/read-expr))))
+                                 rdr/read-expr)))))
 
 (defn abort-interp [& msg]
   (sm/new-sm (fn [s]
@@ -52,7 +58,7 @@
 
 (deftype EvalNamespace [imports syms impls])
 
-(deftype EvalState [ns type-count core-protocols file-name call-depth]
+(deftype EvalState [ns type-count core-protocols file-name call-depth command-line]
   Stringable
   (string-list [_] (list "<EvalState>")))
 
@@ -835,8 +841,12 @@
 (extend-type ast/main-ast
   Evaluator
   (eval* [x]
-    ;; TODO: bind the arg list
-    (eval* (.body x))))
+    (for [cmd-line (sm/get-val .command-line)
+          curr-syms (get-syms)
+          _ (bind (.params x) [cmd-line])
+          result (eval* (.body x))
+          _ (set-syms curr-syms)]
+      result)))
 
 (extend-type ast/quoted-ast
     Evaluator
