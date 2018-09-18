@@ -2,7 +2,7 @@
 (add-ns ev (module "eval.toc"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "1c468a6"))
+                            :sha "6b65dea"))
 (add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
                             "system.toc"
                             :sha "40c1c4d"))
