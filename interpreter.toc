@@ -3,9 +3,6 @@
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
                             :sha "6b65dea"))
-(add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
-                            "system.toc"
-                            :sha "40c1c4d"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
                            :sha "dc80090"))
@@ -15,14 +12,6 @@
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "f7b5678"))
-
-(def path-to-core (extract (or (map (sys/get-environment "TOCCATA_DIR")
-                                    (fn [toc-dir]
-                                      (str toc-dir "/core.toc")))
-                               (do
-                                 (print-err "Could not read environnment variable"
-                                            "TOCCATA_DIR")
-                                 (abort)))))
 
 (def IntegerType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IntegerType};"))
 (def StringBufferType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StringBufferType};"))
@@ -98,9 +87,11 @@
                      'Future (ev/TypeMap {FutureType #{}})
                      'Agent (ev/TypeMap {AgentType #{}})
                      'Opaque (ev/TypeMap {OpaqueType #{}})
-                     'abort interp-abort})
+                     'abort interp-abort
+                     'bpre print-err
+                     'prefs prefs})
 
-(defn interp-file [script-file args]
+(defn interp-file [script-file script-dir args]
   (let [core-syms (reduce (for [proto (keys protocols)
                                 proto-fn (keys (extract (get protocols proto)))]
                             proto-fn)
@@ -129,6 +120,7 @@
                        (assoc-in [.ns ""] (ev/EvalNamespace {} core-syms core-protos))
                        (assoc-in [.ns script-file] (ev/EvalNamespace {} {} {}))
                        (.type-count (inc types-count))
+                       (.script-dir script-dir)
                        (.file-name script-file))]
     (or (for [file-in (fio/file-in script-file)
               asts (ev/parse {'file-name script-file

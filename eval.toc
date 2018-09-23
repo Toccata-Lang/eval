@@ -7,9 +7,6 @@
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "cb55c51"))
-(add-ns sys (git-dependency "https://github.com/Toccata-Lang/system.git"
-                            "system.toc"
-                            :sha "40c1c4d"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
                            :sha "dc80090"))
@@ -44,7 +41,7 @@
   (assert (instance? HashMap syms))
   (assert (instance? HashMap impls)))
 
-(deftype EvalState [ns type-count file-name call-depth command-line]
+(deftype EvalState [ns type-count file-name call-depth command-line script-dir]
   (assert (instance? HashMap ns))
   (assert (instance? Integer type-count))
   (assert (instance? String file-name))
@@ -54,7 +51,7 @@
   Stringable
   (string-list [_] (list "<EvalState>")))
 
-(def empty-state (EvalState {} 0 "" 0 []))
+(def empty-state (EvalState {} 0 "" 0 [] ""))
 
 (defn get-syms []
   (flat-map (sm/get-val .file-name)
@@ -311,6 +308,7 @@
 
 (defn invoke-reified [rv & args]
   (either (flat-map ((for [impl (get-impl (rdr/tag 'invoke) (inc (count args)) (.type-num rv))
+                           _ (bind-fields rv)
                            result (apply-fn impl (cons rv args))]
                        result)
                      (.es rv))
@@ -1062,38 +1060,6 @@
   Evaluator
   (eval [x]
     (sm/state-maybe "")))
-
-(defn file-directory [src-file-name]
-  (map (sys/realpath src-file-name)
-       (fn [real-path]
-         (let [[path-len] (reduce real-path [-1 0]
-                                  (fn [[slash-pos c-pos] c]
-                                    (let [c-pos (inc c-pos)]
-                                      (either (and (= c "/")
-                                                   (maybe [c-pos c-pos]))
-                                              [slash-pos c-pos]))))]
-           (subs real-path 0 path-len)))))
-
-(extend-type ast/module-ast
-  Evaluator
-  (eval [x]
-    (let [file (.file-path x)]
-      (for [curr-file-name (sm/get-val .file-name)
-            curr-file-path (sm/when (file-directory curr-file-name))
-            :let [file (str curr-file-path file)]
-            mod-syms (comp (sm/get-in-val [.ns file .syms])
-                           (for [asts (sm/when (for [file-in (fio/file-in file)
-                                                     asts (parse {'file-name file
-                                                                  'line-number 1}
-                                                                 (lazy-list file-in))]
-                                                 asts))
-                                 _ (sm/set-val .file-name file)
-                                 _ (sm/assoc-in-val [.ns file] (EvalNamespace {} {} {}))
-                                 _ (eval asts)
-                                 mod-syms (sm/get-in-val [.ns file .syms])]
-                             mod-syms))
-            _ (sm/assoc-in-val [.ns curr-file-name .imports file] mod-syms)]
-        mod-syms))))
 
 (extend-type ast/add-ns-ast
   Evaluator
