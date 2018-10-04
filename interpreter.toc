@@ -51,6 +51,11 @@
 ;;       (print-err 'perhaps-here impl-name)
 ;;       (impl-fn args))))
 
+(deftype CompiledNs [ns-sym syms protos]
+  Stringable
+  (string-list [_]
+    (list "<CompiledNS " (str ns-sym) ">")))
+
 (deftype interp-impl [impl-name impl-fn]
   Stringable
   (string-list [_]
@@ -91,7 +96,29 @@
                      'bpre print-err
                      'prefs prefs})
 
-(defn interp-file [script-file script-dir args]
+(defn make-compiled-ns [path syms protos]
+  (assert (instance? String path))
+
+  (let [ns-syms (reduce (for [proto (keys protos)
+                              proto-fn (keys (extract (get protos proto)))]
+                          proto-fn)
+                        syms
+                        (fn [syms proto-fn]
+                          (assoc syms proto-fn (ev/ProtoDispatcher (rdr/tag proto-fn) path ev/empty-state))))
+        ns-protos (reduce (seq protos) {}
+                          (fn [m [_ proto]] 
+                            (reduce (seq proto) m
+                                    (fn [m [proto-sym impls]]
+                                      (assoc m
+                                        (rdr/tag proto-sym)
+                                        (map-vals impls
+                                                  (fn [impl-map]
+                                                    (map-vals impl-map
+                                                              (fn [arity]
+                                                                (ev/wrap-arity arity (str proto-sym)))))))))))]
+    (ev/EvalNamespace path {} ns-syms ns-protos)))
+
+(defn interp-file [script-file script-dir base-imports args]
   (let [core-syms (reduce (for [proto (keys protocols)
                                 proto-fn (keys (extract (get protocols proto)))]
                             proto-fn)
@@ -99,26 +126,29 @@
                           (fn [syms proto-fn]
                             (assoc syms proto-fn (ev/ProtoDispatcher (rdr/tag proto-fn) ""
                                                                      ev/empty-state))))
-        core-protos (reduce (seq protocols) {}
-                            (fn [m [_ proto]] 
-                              (reduce (seq proto) m
-                                      (fn [m [proto-sym impls]]
-                                        (assoc m
-                                          (rdr/tag proto-sym)
-                                          (map-vals impls (fn [impl-map]
-                                                            (map-vals impl-map
-                                                                      (fn [arity]
-                                                                        (ev/wrap-arity arity (str proto-sym)))))))))))
-        types-count (reduce (for [protos (vals core-protos)
+        core-ns (make-compiled-ns "" (comp symbols interp-symbols) protocols)
+        base-imports (reduce base-imports {}
+                             (fn [base-imports compiled]
+                               (assoc base-imports
+                                 (.ns-sym compiled) (make-compiled-ns (str (.ns-sym compiled))
+                                                                      (.syms compiled)
+                                                                      (.protos compiled)))))
+        types-count (reduce (for [ns (conj (vals base-imports) core-ns)
+                                  protos (vals (.impls ns))
                                   arities (vals protos)
                                   type-num (keys arities)]
                               type-num)
                             0 (fn [max n]
                                 (either (> n max)
                                         max)))
+        ns-state (reduce (conj (vals base-imports) core-ns) {}
+                         (fn [nss ns]
+                           (assoc nss (.path ns) ns)))
+        base-imports (map-vals base-imports .syms)
         eval-state (-> ev/empty-state
-                       (assoc-in [.ns ""] (ev/EvalNamespace {} core-syms core-protos))
-                       (assoc-in [.ns script-file] (ev/EvalNamespace {} {} {}))
+                       (.ns ns-state)
+                       (assoc-in [.ns script-file] (ev/EvalNamespace script-file base-imports {} {}))
+                       (.base-imports base-imports)
                        (.type-count (inc types-count))
                        (.script-dir script-dir)
                        (.file-name script-file))]
@@ -130,4 +160,3 @@
                               first)
                     last))
         (maybe -1))))
-

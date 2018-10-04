@@ -10,9 +10,6 @@
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
                            :sha "dc80090"))
-(add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
-                            "file-io.toc"
-                            :sha "e7a489b"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "f7b5678"))
@@ -36,12 +33,12 @@
   (str (ast/file-name x) ": "
        (ast/line-number x)))
 
-(deftype EvalNamespace [imports syms impls]
+(deftype EvalNamespace [path imports syms impls]
   (assert (instance? HashMap imports))
   (assert (instance? HashMap syms))
   (assert (instance? HashMap impls)))
 
-(deftype EvalState [ns type-count file-name call-depth command-line script-dir]
+(deftype EvalState [ns type-count file-name call-depth command-line script-dir base-imports]
   (assert (instance? HashMap ns))
   (assert (instance? Integer type-count))
   (assert (instance? String file-name))
@@ -51,7 +48,7 @@
   Stringable
   (string-list [_] (list "<EvalState>")))
 
-(def empty-state (EvalState {} 0 "" 0 [] ""))
+(def empty-state (EvalState {} 0 "" 0 [] "" {}))
 
 (defn get-syms []
   (flat-map (sm/get-val .file-name)
@@ -140,9 +137,12 @@
   (apply-fn [_ args]
     (apply-fn ast args))
 
-  (eval [_]
+  (eval [t]
     (for [curr-state (sm/update-state identity)]
-      (Thunk ast curr-state)))
+      (fn [& args]
+        (-> t
+            (update-state curr-state)
+            (apply args)))))
 
   Container
   (apply [_ args]
@@ -208,6 +208,12 @@
   Stringable
   (string-list [_]
     (list (str prototype-name)))
+
+  Container
+  (apply [disp args]
+    (either (flat-map ((apply-fn disp args) es)
+                      first)
+            (abort)))
 
   Function
   (invoke [v]
