@@ -459,7 +459,7 @@
 
   Composition
   (comp* [x xs]
-    (TypeMap (comp* type-map (map xs .type-map))))
+    (TypeMap (comp* type-map (map xs type-mapping))))
 
   Type
   (instance? [_ v]
@@ -498,7 +498,7 @@
 
   Composition
   (comp* [x xs]
-    (TypeMap (comp* type-map (map xs .type-map)))))
+    (TypeMap (comp* type-map (map xs type-mapping)))))
 
 (extend-type List
   Evaluator
@@ -905,7 +905,7 @@
                     (abort-interp "Could not extend type" (str "'" (.type x) "'") "at"
                            (ast-location-str x)))
               (fn [type]
-                (traverse (keys (.type-map type))
+                (traverse (keys (type-mapping type))
                           (fn [type-num]
                             (comp (reify-impls (.impls x) type-num (ast-location-str x))
                                   (sm/state-maybe '_))))))))
