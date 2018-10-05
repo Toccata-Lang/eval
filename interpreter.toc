@@ -151,7 +151,8 @@
                        (.base-imports base-imports)
                        (.type-count (inc types-count))
                        (.script-dir script-dir)
-                       (.file-name script-file))]
+                       (.file-name script-file)
+                       (.command-line (vec (cons script-file args))))]
     (or (for [file-in (fio/file-in script-file)
               asts (ev/parse {'file-name script-file
                               'line-number 1}
