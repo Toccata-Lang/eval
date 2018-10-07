@@ -408,6 +408,9 @@
                  (maybe x))))
 
   Type
+  (has-field [_ field]
+    (maybe field))
+
   (type-args [_]
     fields)
 
