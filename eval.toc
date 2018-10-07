@@ -61,6 +61,9 @@
             (fn [ns-path]
               (sm/assoc-in-val [.ns ns-path .syms] syms))))
 
+;; TODO: this is a stupid workaround for a stupid compiler bug
+(def traverse)
+
 (defprotocol Evaluator
   (untag [s]
     ;; remove the tag information from a symbol
@@ -94,7 +97,10 @@
 
   (apply-fn [f args]
     ;; evaluate 'f' given paramters bound to 'args'
-    (assert-result r (instance? sm/state-maybe r)))
+    (assert-result r (instance? sm/state-maybe r))
+
+    (for [args (traverse (seq args) eval)]
+      (apply f args)))
 
   (eval-def [x]
     (assert-result r (instance? sm/state-maybe r)))
@@ -462,6 +468,9 @@
     (TypeMap (comp* type-map (map xs type-mapping))))
 
   Type
+  (type-mapping [_]
+    type-map)
+  
   (instance? [_ v]
     (or (and (get type-map FunctionType)
              (or (instance? ast/fn-ast v)
@@ -475,6 +484,9 @@
   (assert (instance? HashMap type-map))
 
   Type
+  (type-mapping [_]
+    type-map)
+
   (instance? [_ v]
     (and (= reified-type (get-type v))
          (maybe v)))
