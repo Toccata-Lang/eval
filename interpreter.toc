@@ -5,10 +5,10 @@
                             :sha "6b65dea"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "dc80090"))
+                           :sha "30c9181"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
-                            :sha "e7a489b"))
+                            :sha "08058d6"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "f7b5678"))
@@ -127,7 +127,7 @@
                             (assoc syms proto-fn (ev/ProtoDispatcher (rdr/tag proto-fn) ""
                                                                      ev/empty-state))))
         core-ns (make-compiled-ns "" (comp symbols interp-symbols) protocols)
-        base-imports (reduce base-imports {}
+        base-imports (reduce base-imports {"" core-ns}
                              (fn [base-imports compiled]
                                (assoc base-imports
                                  (.ns-sym compiled) (make-compiled-ns (str (.ns-sym compiled))

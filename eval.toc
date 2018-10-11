@@ -3,13 +3,13 @@
                             :sha "6b65dea"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "be57226"))
+                           :sha "59e9a72"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "cb55c51"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "dc80090"))
+                           :sha "30c9181"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "f7b5678"))
@@ -805,8 +805,13 @@
                  (flat-map ((eval (.clause x)) s)
                            (fn [v-s]
                              (let [[v?] v-s]
-                               (or (map v? (fn [v] [v s]))
-                                   ((eval (.alt x)) s)))))))))
+                               (or (and (instance? Maybe v?)
+                                        (or (map v? (fn [v] [v s]))
+                                            ((eval (.alt x)) s)))
+                                   (do
+                                     (print-err "Invalid type of value at " (ast-location-str (.clause x))
+                                                ". Needed 'Maybe' got " (str "'" (type-name v?) "'") ".")
+                                     nothing)))))))))
 
 (extend-type ast/and-ast
   Evaluator
