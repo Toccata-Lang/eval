@@ -133,6 +133,7 @@
                                  (.ns-sym compiled) (make-compiled-ns (str (.ns-sym compiled))
                                                                       (.syms compiled)
                                                                       (.protos compiled)))))
+        ;; TODO: see about using the rdr/type-count thingy
         types-count (reduce (for [ns (conj (vals base-imports) core-ns)
                                   protos (vals (.impls ns))
                                   arities (vals protos)

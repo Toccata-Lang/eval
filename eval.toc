@@ -338,7 +338,7 @@
 (deftype ReifiedValue [type-sym type-num fields field-names es]
   (assert (instance? Maybe type-sym))
   (assert (instance? Integer type-num))
-  (assert (instance? Vector fields))
+  (assert (instance? Vector field-names))
   (assert (instance? params-ast fields))
   (assert (instance? EvalState es))
 
@@ -408,6 +408,9 @@
                  (maybe x))))
 
   Type
+  (type-mapping [_]
+    {type-num (set field-names)})
+
   (has-field [_ field]
     (maybe field))
 
@@ -430,7 +433,7 @@
                        es)
                       first)
             (list "<" (str (either type-sym "reified"))
-                  " " (apply str (seq fields)) ">")))
+                  " " (apply str (interpose (seq fields) ", ")) ">")))
 
   Evaluator
   (update-state [x new-state]
@@ -569,10 +572,31 @@
         _ (bind sym (comp* type-map type-maps))]
     '_))
 
+(defn define-enum-type [asts sym]
+  (assert (instance? rdr/tagged-symbol sym))
+
+  (for [ast (sm/when (some asts (partial instance? ast/call-ast)))
+        :when (= (.call-target ast) 'enum)
+        type-maps (traverse (.args ast) (fn [arg]
+                                          ;; TODO
+                                          ;; (and (= 1 (count type-map))
+                                          ;;      (flat-map (first (seq type-map))
+                                          ;;                (fn [[type-num field-set]]
+                                          ;;                  (and (empty? field-set)
+                                          ;;                       (< TypeCount type-num)))))
+                                          (map (comp (lookup-sym arg)
+                                                     (abort-interp "Could not find type definition for"
+                                                                   (str "'" arg "'") "at"
+                                                                   (ast-location-str arg)))
+                                               type-mapping)))
+        _ (bind sym (TypeMap (comp* {} (seq type-maps))))]
+    '_))
+
 (defn definition-value [asts sym]
   (assert (instance? rdr/tagged-symbol sym))
 
   (comp (define-sum-type asts sym)
+        (define-enum-type asts sym)
         (for [_ (sm/get-in-val [.ns "" .syms (.base sym)])]
           (print-err "Redefining symbols from the core namespace is not allowed."
                      (str "'" sym "'") "cannot be defined at"
@@ -603,6 +627,7 @@
 (def FnBodyAST (comp CoreTypes
                      ast/CodeAST
                      rdr/tagged-symbol
+                     Thunk
                      ast/fn-ast))
 
 (extend-type ast/fn-ast
