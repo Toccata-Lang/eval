@@ -5,7 +5,7 @@
                             :sha "6b65dea"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "30c9181"))
+                           :sha "d33cc65"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "08058d6"))
@@ -31,46 +31,46 @@
 (def AgentType (inline C Integer "(Value *)&(Integer){IntegerType, -1, AgentType};"))
 (def OpaqueType (inline C Integer "(Value *)&(Integer){IntegerType, -1, OpaqueType};"))
 
-;; TODO: this generates bad code
-;; (defn interp-impl [impl-name impl-fn]
-;;   (reify
-;;     Stringable
-;;     (string-list [_]
-;;       (list (str impl-name)))
-
-;;     Eq
-;;     (=* [x y]
-;;       (print-err 'WTF!!!)
-;;       nothing)
-
-;;     ev/Evaluator
-;;     (ev/eval [x]
-;;       (sm/state-maybe x))
-
-;;     (ev/apply-fn [_ args]
-;;       (print-err 'perhaps-here impl-name)
-;;       (impl-fn args))))
-
 (deftype CompiledNs [ns-sym syms protos]
   Stringable
   (string-list [_]
     (list "<CompiledNS " (str ns-sym) ">")))
 
-(deftype interp-impl [impl-name impl-fn]
-  Stringable
-  (string-list [_]
-    (list (str impl-name)))
+;; TODO: this generates bad code
+(defn interp-impl [impl-name impl-fn]
+  (reify
+    Stringable
+    (string-list [_]
+      (list (str impl-name)))
 
-  Eq
-  (=* [x y]
-    nothing)
+    Eq
+    (=* [x y]
+      (print-err 'WTF!!!)
+      nothing)
 
-  ev/Evaluator
-  (ev/eval [x]
-    (sm/state-maybe x))
+    ev/Evaluator
+    (ev/eval [x]
+      (sm/state-maybe x))
 
-  (ev/apply-fn [_ args]
-    (apply impl-fn (seq args))))
+    (ev/apply-fn [_ args]
+      (print-err 'perhaps-here impl-name)
+      (impl-fn args))))
+
+;; (deftype interp-impl [impl-name impl-fn]
+;;   Stringable
+;;   (string-list [_]
+;;     (list (str impl-name)))
+
+;;   Eq
+;;   (=* [x y]
+;;     nothing)
+
+;;   ev/Evaluator
+;;   (ev/eval [x]
+;;     (sm/state-maybe x))
+
+;;   (ev/apply-fn [_ args]
+;;     (apply impl-fn (seq args))))
 
 (def interp-abort (interp-impl 'interp-abort
                                (fn [x y]

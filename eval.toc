@@ -1,15 +1,16 @@
+
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
                             :sha "6b65dea"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "59e9a72"))
+                           :sha "ea738c4"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "cb55c51"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "30c9181"))
+                           :sha "d33cc65"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
                             :sha "f7b5678"))
@@ -65,17 +66,17 @@
 (def traverse)
 
 (defprotocol Evaluator
+  (traverse [coll f]
+    ;; traverses a Sequence, applying 'f' to each item
+    ;; 'f' must take one value and return a 'state-maybe' value
+    (assert-result x (instance? sm/new-sm x)))
+
   (untag [s]
     ;; remove the tag information from a symbol
     s)
 
   (update-state [x _]
     x)
-
-  (traverse [coll f]
-    ;; traverses a Sequence, applying 'f' to each item
-    ;; 'f' must take one value and return a 'state-maybe' value
-    (assert-result x (instance? sm/new-sm x)))
 
   (bind [_ _]
     ;; bind a value to a symbol in the .syms field of the current namespace
@@ -93,7 +94,8 @@
 
   (lookup-sym [s]
     ;; retrieve the value bound to 's'
-    (assert-result r (instance? sm/state-maybe r)))
+    (assert-result r (instance? sm/state-maybe r))
+    (zero sm/state-maybe))
 
   (apply-fn [f args]
     ;; evaluate 'f' given paramters bound to 'args'
@@ -292,8 +294,13 @@
                                                "arguments for type"
                                                (str "'" (type-name disp-arg) ".")))
                       syms (get-syms)
+                      ;; _ (debug 'disp-arg disp-arg)
+                      ;; _ (flat-map (lookup-sym (rdr/tag 'class)) (partial debug 'before))
                       _ (bind-fields disp-arg)
+                      ;; _ (flat-map (lookup-sym (rdr/tag 'class)) (partial debug 'after))
+                      ;; _ (debug 'impl (type-name impl))
                       r (apply-fn impl (comp [disp-arg] (rest args)))
+                      ;; _ (debug 'result r)
                       _ (set-syms syms)]
                   r))))))
 
@@ -870,25 +877,6 @@
                                                    (or (and v (maybe v-s))
                                                        ((eval clause) s))))))))))))
 
-(extend-type ast/assert-ast
-  Evaluator
-  (eval-def [x]
-    (sm/state-maybe x))
-
-  (eval [assertion]
-    ;; TODO: this needs to be completed
-    (sm/state-maybe assertion)))
-
-(extend-type ast/result-ast
-  Evaluator
-  (eval-def [x]
-    (sm/state-maybe x))
-
-  (eval [assertion]
-    ;; TODO: this needs to be completed
-    (sm/state-maybe assertion)))
-  
-
 (extend-type ast/params-ast
   Evaluator
   (uniqueify [x]
@@ -974,7 +962,7 @@
                                          (range (count (.fields x))))
                               {} (fn [m [field-name index]]
                                    (assoc m (rdr/tag (symbol (str "." field-name))) index)))]
-    (for [_ (traverse (remove (.impls x) (partial instance? ast/assert-ast))
+    (for [_ (traverse (.impls x)
                       (fn [impls]
                         (reify-impls impls type-num (ast-location-str x))))
           _ (traverse (seq field-indices)
