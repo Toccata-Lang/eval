@@ -1,7 +1,7 @@
 
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "6b65dea"))
+                            :sha "89b2467"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "ea738c4"))
@@ -13,7 +13,7 @@
                            :sha "d33cc65"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "f7b5678"))
+                            :sha "862e62f"))
 
 (def FunctionType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FunctionType};"))
 
@@ -1085,7 +1085,7 @@
                  (do
                    (print-err "A value can not be bound to a namespace-qualified symbol. At"
                               (str "'" (ast/file-name x) "',") (ast/line-number x))
-                   (zero sm/state-maybe)))
+                   (maybe (zero sm/state-maybe))))
             (flat-map (sm/get-val .file-name)
                       (fn [ns-path]
                         (sm/assoc-in-val [.ns ns-path .syms x] v))))))
