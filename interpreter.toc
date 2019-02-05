@@ -37,40 +37,41 @@
     (list "<CompiledNS " (str ns-sym) ">")))
 
 ;; TODO: this generates bad code
-(defn interp-impl [impl-name impl-fn]
-  (reify
-    Stringable
-    (string-list [_]
-      (list (str impl-name)))
+;; maybe
+;; (defn interp-impl [impl-name impl-fn]
+;;   (reify
+;;     Stringable
+;;     (string-list [_]
+;;       (list (str impl-name)))
 
-    Eq
-    (=* [x y]
-      (print-err 'WTF!!!)
-      nothing)
+;;     Eq
+;;     (=* [x y]
+;;       (print-err 'WTF!!!)
+;;       nothing)
 
-    ev/Evaluator
-    (ev/eval [x]
-      (sm/state-maybe x))
+;;     ev/Evaluator
+;;     (ev/eval [x]
+;;       (sm/state-maybe x))
 
-    (ev/apply-fn [_ args]
-      (print-err 'perhaps-here impl-name)
-      (impl-fn args))))
+;;     (ev/apply-fn [_ args]
+;;       (print-err 'perhaps-here impl-name)
+;;       (impl-fn args))))
 
-;; (deftype interp-impl [impl-name impl-fn]
-;;   Stringable
-;;   (string-list [_]
-;;     (list (str impl-name)))
+(deftype interp-impl [impl-name impl-fn]
+  Stringable
+  (string-list [_]
+    (list (str impl-name)))
 
-;;   Eq
-;;   (=* [x y]
-;;     nothing)
+  Eq
+  (=* [x y]
+    nothing)
 
-;;   ev/Evaluator
-;;   (ev/eval [x]
-;;     (sm/state-maybe x))
+  ev/Evaluator
+  (ev/eval [x]
+    (sm/state-maybe x))
 
-;;   (ev/apply-fn [_ args]
-;;     (apply impl-fn (seq args))))
+  (ev/apply-fn [_ args]
+    (apply impl-fn (seq args))))
 
 (def interp-abort (interp-impl 'interp-abort
                                (fn [x y]
@@ -99,12 +100,15 @@
 (defn make-compiled-ns [path syms protos]
   (assert (instance? String path))
 
-  (let [ns-syms (reduce (for [proto (keys protos)
-                              proto-fn (keys (extract (get protos proto)))]
+  (let [ns-syms (reduce (for [[_ proto-fns] (seq protos)
+                              proto-fn (keys proto-fns)]
                           proto-fn)
                         syms
                         (fn [syms proto-fn]
-                          (assoc syms proto-fn (ev/ProtoDispatcher (rdr/tag proto-fn) path ev/empty-state))))
+                          (let [proto-fn (either (map (instance? rdr/tagged-symbol proto-fn) .base)
+                                                 proto-fn)]
+                            (assoc syms
+                              proto-fn (ev/ProtoDispatcher (rdr/tag proto-fn) path ev/empty-state)))))
         ns-protos (reduce (seq protos) {}
                           (fn [m [_ proto]] 
                             (reduce (seq proto) m
@@ -119,14 +123,7 @@
     (ev/EvalNamespace path {} ns-syms ns-protos)))
 
 (defn interp-file [script-file script-dir base-imports args]
-  (let [core-syms (reduce (for [proto (keys protocols)
-                                proto-fn (keys (extract (get protocols proto)))]
-                            proto-fn)
-                          (comp symbols interp-symbols)
-                          (fn [syms proto-fn]
-                            (assoc syms proto-fn (ev/ProtoDispatcher (rdr/tag proto-fn) ""
-                                                                     ev/empty-state))))
-        core-ns (make-compiled-ns "" (comp symbols interp-symbols) protocols)
+  (let [core-ns (make-compiled-ns "" (comp symbols interp-symbols) protocols)
         base-imports (reduce base-imports {"" core-ns}
                              (fn [base-imports compiled]
                                (assoc base-imports

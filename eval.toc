@@ -110,7 +110,7 @@
   (eval [x]
     ;; evaluate an expression 'x' to produce a value (and side effects)
     (assert-result r (instance? sm/state-maybe r))
-    (sm/state-maybe x)))
+    (wrap sm/zero-sm x)))
 
 (def parse (rd/parser
             (grmr/all (grmr/optional rdr/shebang)
@@ -128,10 +128,10 @@
 (extend-type CoreTypes
   Evaluator
   (eval-def [x]
-    (sm/state-maybe x))
+    (wrap sm/zero-sm x))
 
   (eval [x]
-    (sm/state-maybe x)))
+    (wrap sm/zero-sm x)))
 
 (deftype Thunk [ast es]
   Stringable
@@ -274,10 +274,10 @@
     (.es x new-state))
 
   (eval-def [x]
-    (sm/state-maybe x))
+    (wrap sm/zero-sm x))
   
   (eval [x]
-    (sm/state-maybe x))
+    (wrap sm/zero-sm x))
 
   (apply-fn [_ args]
     (let [num-args (count args)]
@@ -309,7 +309,7 @@
                   (fn [_]
                     (abort-interp "Trying to redefine a protocol named"
                                   (str "'" sym "'"))))
-        (sm/state-maybe '_)))
+        (wrap sm/zero-sm '_)))
 
 (defn set-impl [sym num-args type-num impl]
   (flat-map (lookup-sym sym)
@@ -459,7 +459,7 @@
 
   (bind-fields [_]
     (either (and (empty? fields)
-                 (maybe (sm/state-maybe '_)))
+                 (maybe (wrap sm/zero-sm '_)))
             (traverse (zip-lists (seq field-names) (seq fields))
                       (fn [[name value]]
                         (bind name value))))))
@@ -471,10 +471,10 @@
 
   Evaluator
   (eval-def [x]
-    (sm/state-maybe x))
+    (wrap sm/zero-sm x))
 
   (eval [x]
-    (sm/state-maybe x))
+    (wrap sm/zero-sm x))
 
   Composition
   (comp* [x xs]
@@ -513,7 +513,7 @@
 
   Evaluator
   (eval [x]
-    (sm/state-maybe x))
+    (wrap sm/zero-sm x))
 
   (apply-fn [f args]
     (for [s (sm/update-state identity)]
@@ -528,7 +528,7 @@
 (extend-type List
   Evaluator
   (traverse [asts f]
-    (apply (sm/state-maybe list)
+    (apply (wrap sm/zero-sm list)
            (-> asts
                (remove (partial instance? ast/block-comment-ast))
                (map f))))
@@ -623,7 +623,9 @@
                 (filter (fn [ast]
                           (or (instance? ast/CodeAST ast)
                               (instance? rdr/tagged-symbol ast)
-                              (instance? ast/fn-ast ast))))
+                              (instance? ast/fn-ast ast)
+                              (instance? ast/string-ast ast)
+                              (instance? ast/integer-ast ast))))
                 (remove (partial instance? ast/inline-ast))
                 (definition-value sym))
             (sm/new-sm (fn [s]
@@ -789,7 +791,7 @@
                                               (set-impl fn-sym num-args type-num
                                                         (ast/fn-ast (maybe fn-sym) [new-arity]))))
                                   (abort-interp "Could not reify an implementation of"
-                                         (str "'" fn-sym "'") "at" (ast-location-str arity)))))))))
+                                                (str "'" fn-sym "'") "at" (ast-location-str arity)))))))))
 
 (extend-type ast/reify-ast
   Evaluator
@@ -936,7 +938,7 @@
   (eval [x]
     (flat-map (comp (lookup-sym (.type x))
                     (abort-interp "Could not extend type" (str "'" (.type x) "'") "at"
-                           (ast-location-str x)))
+                                  (ast-location-str x)))
               (fn [type]
                 (traverse (keys (type-mapping type))
                           (fn [type-num]
