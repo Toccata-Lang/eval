@@ -4,19 +4,19 @@
                           :sha "3435b1b"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "89b2467"))
+                            :sha "1957ade"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "ea738c4"))
+                           :sha "1c09660"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
-                             :sha "cb55c51"))
+                             :sha "1e280ff"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "d33cc65"))
+                           :sha "f655efc"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "862e62f"))
+                            :sha "b667c1b"))
 
 (def FunctionType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FunctionType};"))
 

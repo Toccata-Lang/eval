@@ -2,16 +2,16 @@
 (add-ns ev (module "eval.toc"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "89b2467"))
+                            :sha "1957ade"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "d33cc65"))
+                           :sha "f655efc"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "08058d6"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "862e62f"))
+                            :sha "b667c1b"))
 
 (def IntegerType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IntegerType};"))
 (def StringBufferType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StringBufferType};"))
@@ -75,7 +75,7 @@
 
 (def interp-abort (interp-impl 'interp-abort
                                (fn [x y]
-                                 (zero sm/state-maybe))))
+                                 sm/zero-sm)))
 
 (def interp-symbols {'Integer (ev/TypeMap {IntegerType #{}})
                      'StringBuffer (ev/TypeMap {StringBufferType #{}})
