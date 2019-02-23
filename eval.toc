@@ -1,4 +1,7 @@
 
+(add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
+                          "constraints.toc"
+                          :sha "3435b1b"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
                             :sha "89b2467"))
@@ -104,6 +107,17 @@
     (for [args (traverse (seq args) eval)]
       (apply f args)))
 
+  (find-arity [f n]
+    (assert (instance? Integer n))
+    (assert-result r (instance? Maybe r)))
+
+  (param-constraints [f]
+    (assert-result r (instance? Maybe r)))
+
+  (check-constraints [x]
+    ;; validate the constraints of expression 'x'
+    (assert-result r (instance? sm/state-maybe r)))
+
   (eval-def [x]
     (assert-result r (instance? sm/state-maybe r)))
 
@@ -140,7 +154,7 @@
 
   Evaluator
   (update-state [x new-state]
-    (Thunk ast new-state))
+    (.es x new-state))
 
   (apply-fn [_ args]
     (apply-fn ast args))
@@ -615,6 +629,22 @@
                                                       (str "'" sym "' at" (ast-location-str asts)))))
                             (bind sym (reduce values '_ (fn [_ x] x))))))))
 
+(extend-type ast/string-ast
+  Evaluator
+  (eval [x]
+    (wrap sm/zero-sm (.string x)))
+
+  (eval-def [x]
+    (wrap sm/zero-sm x)))
+
+(extend-type ast/integer-ast
+  Evaluator
+  (eval [x]
+    (wrap sm/zero-sm (.int x)))
+
+  (eval-def [x]
+    (wrap sm/zero-sm x)))
+
 (extend-type ast/definition-ast
   Evaluator
   (eval [x]
@@ -719,8 +749,8 @@
                        (sm/state-maybe '_))))
             (comp (get-impl fn-sym num-args 0)
                   (flat-map (eval (ast/fn-ast (maybe fn-sym)
-                                               [(ast/fn-arity-ast fn-sym "" params ""
-                                                                  body)]))
+                                              [(ast/fn-arity-ast fn-sym "" params "" body
+                                                                 [] c/top-type)]))
                             (partial set-impl fn-sym num-args 0))))))
 
 (extend-type ast/prototype-ast
@@ -807,6 +837,20 @@
                                                       (maybe x))))]
       (ReifiedValue (maybe (str "reified at: " (ast-location-str x))) type-num [] [] empty-state))))
 
+(extend-type Function
+  Evaluator
+  (find-arity [f n]
+    (inline C Maybe "
+   return((Value *)maybe((List *)0, (Value *)0, (Value *)findFnArity(f_0, ((Integer *)n_1)->numVal)));
+")))
+
+(extend-type FnArity
+  Evaluator
+  (param-constraints [f]
+    (inline C Maybe "
+   return((Value *)maybe((List *)0, (Value *)0, ((FnArity *)f_0)->paramConstraints));
+")))
+
 (extend-type ast/call-ast
   Evaluator
   (eval [x]
@@ -824,7 +868,14 @@
 
   (eval-def [ast]
     (for [target (eval-def (.call-target ast))
-          args (eval-def (.args ast))]
+          args (eval-def (.args ast))
+          _ (either (for [arity (find-arity target (count args))
+                          constraints (param-constraints arity)
+                          _ (c/compose-constraints (ast/file-name (.call-target ast))
+                                                   (ast/line-number (.call-target ast))
+                                                   args constraints)]
+                      '_)
+                    sm/zero-sm)]
       (ast/call-ast target args))))
 
 (extend-type ast/either-ast
@@ -1056,6 +1107,7 @@
                 new-sym))))
 
   (lookup-sym [x]
+    ;;  TODO: add another level
     (for [curr-file (sm/get-val .file-name)
           curr-state (sm/update-state identity)
           r (either (map (.ns x)
@@ -1090,6 +1142,7 @@
                    (maybe (zero sm/state-maybe))))
             (flat-map (sm/get-val .file-name)
                       (fn [ns-path]
+                        ;; TODO: add another level
                         (sm/assoc-in-val [.ns ns-path .syms x] v))))))
 
 (extend-type Fn
