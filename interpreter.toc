@@ -67,6 +67,9 @@
     nothing)
 
   ev/Evaluator
+  (ev/find-arity [x args]
+    (ev/find-arity impl-fn [x args]))
+
   (ev/eval [x]
     (sm/state-maybe x))
 
@@ -74,8 +77,7 @@
     (apply impl-fn (seq args))))
 
 (def interp-abort (interp-impl 'interp-abort
-                               (fn [x y]
-                                 sm/zero-sm)))
+                               (constantly sm/zero-sm)))
 
 (def interp-symbols {'Integer (ev/TypeMap {IntegerType #{}})
                      'StringBuffer (ev/TypeMap {StringBufferType #{}})
@@ -97,57 +99,71 @@
                      'bpre print-err
                      'prefs prefs})
 
+(defn proto-fn-names [protos]
+  (for [[_ proto-fns] (seq protos)
+        proto-fn (keys proto-fns)]
+    proto-fn))
+
+(defn create-proto-dispatchers [path syms protos]
+  (-> protos
+      (proto-fn-names)
+      (reduce syms (fn [syms proto-fn]
+                     (let [proto-fn (either (map (instance? rdr/tagged-symbol proto-fn) .base)
+                                            proto-fn)
+                           dispatcher (ev/ProtoDispatcher (rdr/tag proto-fn) path ev/empty-state)]
+                       (assoc syms proto-fn dispatcher))))))
+
+(defn wrap-proto-fn-arities [protos] 
+  (reduce (seq protos) {}
+          (fn [m [_ proto]]
+            (reduce (seq proto) m
+                    (fn [m [proto-sym impls]]
+                      (assoc m
+                        (rdr/tag proto-sym)
+                        (map-vals impls
+                                  (fn [impl-map]
+                                    (map-vals impl-map
+                                              (fn [arity]
+                                                (ev/wrap-arity arity (str proto-sym))))))))))))
+
 (defn make-compiled-ns [path syms protos]
   (assert (instance? String path))
 
-  (let [ns-syms (reduce (for [[_ proto-fns] (seq protos)
-                              proto-fn (keys proto-fns)]
-                          proto-fn)
-                        syms
-                        (fn [syms proto-fn]
-                          (let [proto-fn (either (map (instance? rdr/tagged-symbol proto-fn) .base)
-                                                 proto-fn)]
-                            (assoc syms
-                              proto-fn (ev/ProtoDispatcher (rdr/tag proto-fn) path ev/empty-state)))))
-        ns-protos (reduce (seq protos) {}
-                          (fn [m [_ proto]] 
-                            (reduce (seq proto) m
-                                    (fn [m [proto-sym impls]]
-                                      (assoc m
-                                        (rdr/tag proto-sym)
-                                        (map-vals impls
-                                                  (fn [impl-map]
-                                                    (map-vals impl-map
-                                                              (fn [arity]
-                                                                (ev/wrap-arity arity (str proto-sym)))))))))))]
-    (ev/EvalNamespace path {} ns-syms ns-protos)))
+  (ev/EvalNamespace path {}
+                    (create-proto-dispatchers path syms protos)
+                    (wrap-proto-fn-arities protos)))
+
+(defn count-types [imports]
+  (-> (for [ns imports
+                protos (vals (.impls ns))
+                arities (vals protos)
+                type-num (keys arities)]
+        type-num)
+      (reduce 0 (fn [max n]
+                  (either (> n max)
+                          max)))
+      inc))
 
 (defn interp-file [script-file script-dir base-imports args]
+  (ev/init ev/universal-proto-fn)
   (let [core-ns (make-compiled-ns "" (comp symbols interp-symbols) protocols)
         base-imports (reduce base-imports {"" core-ns}
                              (fn [base-imports compiled]
+                               (assert (instance? CompiledNs compiled))
+
                                (assoc base-imports
                                  (.ns-sym compiled) (make-compiled-ns (str (.ns-sym compiled))
                                                                       (.syms compiled)
                                                                       (.protos compiled)))))
-        ;; TODO: see about using the rdr/type-count thingy
-        types-count (reduce (for [ns (conj (vals base-imports) core-ns)
-                                  protos (vals (.impls ns))
-                                  arities (vals protos)
-                                  type-num (keys arities)]
-                              type-num)
-                            0 (fn [max n]
-                                (either (> n max)
-                                        max)))
-        ns-state (reduce (conj (vals base-imports) core-ns) {}
-                         (fn [nss ns]
-                           (assoc nss (.path ns) ns)))
-        base-imports (map-vals base-imports .syms)
+        imported-ns (conj (vals base-imports) core-ns)
+        ns-state (reduce imported-ns {} (fn [nss ns]
+                                          (assoc nss (.path ns) ns)))
+        base-syms (map-vals base-imports .syms)
         eval-state (-> ev/empty-state
                        (.ns ns-state)
-                       (assoc-in [.ns script-file] (ev/EvalNamespace script-file base-imports {} {}))
-                       (.base-imports base-imports)
-                       (.type-count (inc types-count))
+                       (assoc-in [.ns script-file] (ev/EvalNamespace script-file base-syms {} {}))
+                       (.base-imports base-syms)
+                       (.type-count (count-types imported-ns))
                        (.script-dir script-dir)
                        (.file-name script-file)
                        (.command-line (vec (cons script-file args))))]
