@@ -31,7 +31,7 @@
 (def AgentType (inline C Integer "(Value *)&(Integer){IntegerType, -1, AgentType};"))
 (def OpaqueType (inline C Integer "(Value *)&(Integer){IntegerType, -1, OpaqueType};"))
 
-(deftype CompiledNs [ns-sym syms protos]
+(deftype CompiledNs [ns-sym path syms protos]
   Stringable
   (string-list [_]
     (list "<CompiledNS " (str ns-sym) ">")))
@@ -126,12 +126,13 @@
                                               (fn [arity]
                                                 (ev/wrap-arity arity (str proto-sym))))))))))))
 
-(defn make-compiled-ns [path syms protos]
+(defn make-compiled-ns [path syms protos import-paths]
   (assert (instance? String path))
 
   (ev/EvalNamespace path {}
                     (create-proto-dispatchers path syms protos)
-                    (wrap-proto-fn-arities protos)))
+                    (wrap-proto-fn-arities protos)
+                    import-paths))
 
 (defn count-types [imports]
   (-> (for [ns imports
@@ -146,7 +147,10 @@
 
 (defn interp-file [script-file script-dir base-imports args]
   (ev/init ev/universal-proto-fn)
-  (let [core-ns (make-compiled-ns "" (comp symbols interp-symbols) protocols)
+  (let [core-ns (make-compiled-ns "" (comp symbols interp-symbols) protocols {})
+        import-paths (reduce base-imports {"" ""}
+                             (fn [m import]
+                               (assoc m (.path import) (rdr/tag (.ns-sym import)))))
         base-imports (reduce base-imports {"" core-ns}
                              (fn [base-imports compiled]
                                (assert (instance? CompiledNs compiled))
@@ -154,14 +158,15 @@
                                (assoc base-imports
                                  (.ns-sym compiled) (make-compiled-ns (str (.ns-sym compiled))
                                                                       (.syms compiled)
-                                                                      (.protos compiled)))))
+                                                                      (.protos compiled)
+                                                                      import-paths))))
         imported-ns (conj (vals base-imports) core-ns)
         ns-state (reduce imported-ns {} (fn [nss ns]
                                           (assoc nss (.path ns) ns)))
         base-syms (map-vals base-imports .syms)
         eval-state (-> ev/empty-state
                        (.ns ns-state)
-                       (assoc-in [.ns script-file] (ev/EvalNamespace script-file base-syms {} {}))
+                       (assoc-in [.ns script-file] (ev/EvalNamespace script-file base-syms {} {} import-paths))
                        (.base-imports base-syms)
                        (.type-count (count-types imported-ns))
                        (.script-dir script-dir)

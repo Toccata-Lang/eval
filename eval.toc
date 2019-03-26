@@ -43,7 +43,7 @@ return(nothing);
   (str (ast/file-name x) ": "
        (ast/line-number x)))
 
-(deftype EvalNamespace [path imports syms impls]
+(deftype EvalNamespace [path imports syms impls import-paths]
   (assert (instance? HashMap imports))
   (assert (instance? HashMap syms))
   (assert (instance? HashMap impls)))
@@ -337,10 +337,9 @@ return(nothing);
       ;; (sm/get-in-val [.ns path .impls prototype-name num-args (get-type disp-arg)])
       (for [impl (comp (sm/get-in-val [.ns path .impls prototype-name num-args 0])
                        (abort-interp "Could not find implementation of"
-                                     (str "'" prototype-name "'") "with"
-                                     num-args
-                                     "arguments for type"
-                                     (str "'" disp-arg "." args)))
+                                     (str "'" prototype-name "'") "for type"
+                                     (str "'" (type-name disp-arg) "' with")
+                                     num-args "arguments."))
             result (find-arity impl args)]
         result))))
 
@@ -402,6 +401,10 @@ return(nothing);
                  (maybe x))))
 
   Type
+  (type-name [_]
+    (str (either type-sym
+                 type-num)))
+
   (type-args [_]
     fields)
 
@@ -458,10 +461,9 @@ return(nothing);
                 (for [impl (comp (sm/get-in-val [.ns path .impls prototype-name num-args (get-type disp-arg)])
                                  (sm/get-in-val [.ns path .impls prototype-name num-args 0])
                                  (abort-interp "Could not find implementation of"
-                                               (str "'" prototype-name "'") "with"
-                                               num-args
-                                               "arguments for type"
-                                               (str "'" (type-name disp-arg) ".")))
+                                               (str "'" prototype-name "'") "for type"
+                                               (str "'" (type-name disp-arg) "' with")
+                                               num-args "arguments."))
                       syms (get-syms)
                       _ (bind-fields disp-arg)
                       r (apply-fn impl (comp [disp-arg] (rest args)))
@@ -498,6 +500,9 @@ return(nothing);
   (assert (instance? HashMap type-map))
 
   Type
+  (type-name [_]
+    (str "*" type-sym " constructor*"))
+
   (type-mapping [_]
     type-map)
 
@@ -521,8 +526,7 @@ return(nothing);
 
   (find-arity [_ args]
     ;; TODO: such a thing doesn't really exist. Yet.
-    (sm/state-maybe 'some-arity)
-    )
+    (sm/state-maybe 'some-arity))
 
   (eval [x]
     (map (sm/update-state identity)
@@ -532,8 +536,7 @@ return(nothing);
     (for [s (sm/update-state identity)]
       (ReifiedValue (maybe type-sym)
                     reified-type
-                    (vec args) field-names s)))
-  )
+                    (vec args) field-names s))))
 
 (defn universal-proto-fn [path fn-sym disp-arg & args]
   (let [path (either (and (= "core" path)
@@ -542,7 +545,9 @@ return(nothing);
         num-args (inc (count args))]
     (and (or (instance? ReifiedValue disp-arg)
              (instance? TypeConstructor disp-arg))
-         (flat-map ((for [impl (sm/get-in-val [.ns path .impls (rdr/tag fn-sym)
+         (flat-map ((for [curr-file (sm/get-val .file-name)
+                          ns-prefix (sm/get-in-val [.ns curr-file .import-paths path])
+                          impl (sm/get-in-val [.ns (str ns-prefix) .impls (rdr/tag fn-sym)
                                                num-args (get-type disp-arg)])
                           _ (bind-fields disp-arg)
                           result (apply-fn impl (cons disp-arg args))]
@@ -645,11 +650,6 @@ return(nothing);
 
   (comp (define-sum-type asts sym)
         (define-enum-type asts sym)
-        (for [_ (sm/get-in-val [.ns "" .syms (.base sym) ;; .value
-                                ])]
-          (print-err "Redefining symbols from the core namespace is not allowed."
-                     (str "'" sym "'") "cannot be defined at"
-                     (ast-location-str asts) "\n"))
         (flat-map (eval asts)
                   (fn [values]
                     (either (and (empty? values)
@@ -859,13 +859,14 @@ return(nothing);
     (eval x))
 
   (eval [x]
-    (for [type-num (sm/get-val .type-count)
-          _ (sm/set-val .type-count (inc type-num))
-          _ (reify-impls (.impls x) type-num (ast-location-str x))
-          _ (set-impl (rdr/tag '=*) 2 type-num (fn [x y]
-                                                 (and (=* (get-type x) (get-type y))
-                                                      (maybe x))))]
-      (ReifiedValue (maybe (str "reified at: " (ast-location-str x))) type-num [] [] empty-state))))
+    (let [name (str "reified at: " (ast-location-str x))]
+      (for [type-num (sm/get-val .type-count)
+            _ (sm/set-val .type-count (inc type-num))
+            _ (reify-impls (.impls x) type-num (ast-location-str x))
+            _ (set-impl (rdr/tag '=*) 2 type-num (fn [x y]
+                                                   (and (=* (get-type x) (get-type y))
+                                                        (maybe x))))]
+        (ReifiedValue (maybe name) type-num [] [] empty-state)))))
 
 (defn find-fn-arity [f n]
   (inline C Maybe "
@@ -1042,9 +1043,6 @@ return(nothing);
 
 (defn create-constructor [sym fields const-type type-num]
   (for [curr-state (sm/update-state identity)
-        _ (set-impl (rdr/tag 'type-name) 1 const-type
-                    (fn [_]
-                      (str "*" sym " constructor*")))
         _ (set-impl (rdr/tag 'invoke) (inc (count fields)) const-type
                     (fn [_ & field-values]
                       (ReifiedValue (maybe sym) type-num (vec field-values) fields curr-state)))
@@ -1089,8 +1087,6 @@ return(nothing);
                             (reify-impls impls type-num (ast-location-str x)))))
           _ (set-impl (rdr/tag 'get-type) 1 type-num (fn [_]
                                                        type-num))
-          _ (set-impl (rdr/tag 'type-name) 1 type-num (fn [_]
-                                                        (str sym)))
           _ (set-impl (rdr/tag 'type-args) 1 type-num type-args)
           _ (comp (get-impl (rdr/tag 'get) 2 type-num)
                   (set-impl (rdr/tag 'get) 2 type-num
