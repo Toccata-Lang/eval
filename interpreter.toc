@@ -67,9 +67,6 @@
     nothing)
 
   ev/Evaluator
-  (ev/find-arity [x args]
-    (ev/find-arity impl-fn [x args]))
-
   (ev/eval [x]
     (sm/state-maybe x))
 
@@ -110,40 +107,22 @@
       (reduce syms (fn [syms proto-fn]
                      (let [proto-fn (either (map (instance? rdr/tagged-symbol proto-fn) .base)
                                             proto-fn)
-                           dispatcher (ev/ProtoDispatcher (rdr/tag proto-fn) path ev/empty-state)]
+                           dispatcher (ev/ProtoDispatcher (rdr/tag proto-fn) path
+                                                          (either (map (get syms proto-fn)
+                                                                       (partial hash-map 0))
+                                                                  {})
+                                                          ev/empty-state)]
                        (assoc syms proto-fn dispatcher))))))
-
-(defn wrap-proto-fn-arities [protos] 
-  (reduce (seq protos) {}
-          (fn [m [_ proto]]
-            (reduce (seq proto) m
-                    (fn [m [proto-sym impls]]
-                      (assoc m
-                        (rdr/tag proto-sym)
-                        (map-vals impls
-                                  (fn [impl-map]
-                                    (map-vals impl-map
-                                              (fn [arity]
-                                                (ev/wrap-arity arity (str proto-sym))))))))))))
 
 (defn make-compiled-ns [path syms protos import-paths]
   (assert (instance? String path))
 
   (ev/EvalNamespace path {}
                     (create-proto-dispatchers path syms protos)
-                    (wrap-proto-fn-arities protos)
                     import-paths))
 
-(defn count-types [imports]
-  (-> (for [ns imports
-                protos (vals (.impls ns))
-                arities (vals protos)
-                type-num (keys arities)]
-        type-num)
-      (reduce 0 (fn [max n]
-                  (either (> n max)
-                          max)))
-      inc))
+(defn type-count []
+  (inline C Integer "return(integerValue(typeCount));"))
 
 (defn interp-file [script-file script-dir base-imports args]
   (ev/init ev/universal-proto-fn)
@@ -160,15 +139,17 @@
                                                                       (.syms compiled)
                                                                       (.protos compiled)
                                                                       import-paths))))
-        imported-ns (conj (vals base-imports) core-ns)
-        ns-state (reduce imported-ns {} (fn [nss ns]
-                                          (assoc nss (.path ns) ns)))
+        ns-state (-> base-imports
+                     (vals)
+                     (conj core-ns)
+                     (reduce {} (fn [nss ns]
+                                  (assoc nss (.path ns) ns))))
         base-syms (map-vals base-imports .syms)
         eval-state (-> ev/empty-state
                        (.ns ns-state)
-                       (assoc-in [.ns script-file] (ev/EvalNamespace script-file base-syms {} {} import-paths))
+                       (assoc-in [.ns script-file] (ev/EvalNamespace script-file base-syms {} import-paths))
                        (.base-imports base-syms)
-                       (.type-count (count-types imported-ns))
+                       (.type-count (type-count))
                        (.script-dir script-dir)
                        (.file-name script-file)
                        (.command-line (vec (cons script-file args))))]

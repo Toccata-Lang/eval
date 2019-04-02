@@ -43,10 +43,9 @@ return(nothing);
   (str (ast/file-name x) ": "
        (ast/line-number x)))
 
-(deftype EvalNamespace [path imports syms impls import-paths]
+(deftype EvalNamespace [path imports syms import-paths]
   (assert (instance? HashMap imports))
-  (assert (instance? HashMap syms))
-  (assert (instance? HashMap impls)))
+  (assert (instance? HashMap syms)))
 
 (deftype EvalState [ns type-count file-name call-depth command-line script-dir base-imports]
   (assert (instance? HashMap ns))
@@ -116,12 +115,6 @@ return(nothing);
     (for [args (traverse (seq args) eval)]
       (apply f args)))
 
-  (find-arity [f n]
-    (assert-result r (instance? sm/state-maybe r)))
-
-  (param-constraints [f]
-    (assert-result r (instance? Maybe r)))
-
   (eval-def [x]
     (assert-result r (instance? sm/state-maybe r))
     (wrap sm/zero-sm x))
@@ -151,11 +144,7 @@ return(nothing);
 
   Container
   (apply [_ xs]
-    (apply value xs))
-
-  Evaluator
-  (find-arity [_ args]
-    (find-arity value args)))
+    (apply value xs)))
 
 (deftype Constrained [value constraints]
   Stringable
@@ -164,35 +153,14 @@ return(nothing);
 
   Container
   (apply [_ xs]
-    (apply value xs))
-
-  Evaluator
-  (find-arity [_ args]
-    (find-arity value args)))
-
-(extend-type CoreTypes
-  Evaluator
-  (eval [x]
-    (wrap sm/zero-sm x)))
-
-(extend-type c/Constraints
-  Evaluator
-  (eval-def [x]
-    ;; TODO: too simplistic. Perhaps add the constraint to the context of the symbol
-    (wrap sm/zero-sm x))
-
-  (eval [x]
-    (wrap sm/zero-sm x)))
+    (apply value xs)))
 
 (deftype Thunk [ast es]
   Stringable
   (string-list [_]
-    (list "<Thunk " (str ast) ">"))
+    (list "<Thunk " (str (.fn-sym ast)) ">"))
 
   Evaluator
-  (find-arity [x args]
-    (find-arity ast args))
-
   (update-state [x new-state]
     (.es x new-state))
 
@@ -258,9 +226,10 @@ return(nothing);
                       first)
             (abort))))
 
-(deftype ProtoDispatcher [prototype-name path es]
+(deftype ProtoDispatcher [prototype-name path impls es]
   (assert (instance? rdr/tagged-symbol prototype-name))
   (assert (instance? String path))
+  (assert (instance? HashMap impls))
   (assert (instance? EvalState es))
 
   Type
@@ -328,20 +297,8 @@ return(nothing);
     (.es x new-state))
 
   (eval [x]
-    (wrap sm/zero-sm x))
-
-  (find-arity [x args]
-    (let [num-args (count args)
-          [disp-arg] args]
-      ;; TODO: we have to find the type of the disp-arg, if possible
-      ;; (sm/get-in-val [.ns path .impls prototype-name num-args (get-type disp-arg)])
-      (for [impl (comp (sm/get-in-val [.ns path .impls prototype-name num-args 0])
-                       (abort-interp "Could not find implementation of"
-                                     (str "'" prototype-name "'") "for type"
-                                     (str "'" (type-name disp-arg) "' with")
-                                     num-args "arguments."))
-            result (find-arity impl args)]
-        result))))
+    (map (sm/update-state identity)
+         (partial update-state x))))
 
 (defn new-protocol [sym]
   (comp (flat-map (lookup-sym sym)
@@ -350,12 +307,11 @@ return(nothing);
                                   (str "'" sym "'"))))
         (wrap sm/zero-sm '_)))
 
-(defn get-impl [sym num-args type-num]
+(defn get-impl [sym type-num]
   (for [disp (lookup-sym sym)
         _ (either (map (instance? ProtoDispatcher disp) sm/state-maybe)
                   (abort-interp (str "'" sym "'") "is not a protocol function."))
-        result (sm/get-in-val [.ns (.path disp) .impls (.prototype-name disp)
-                              num-args type-num])]
+        result (sm/get-in-val [.ns (.path disp) .syms (.prototype-name disp) .impls type-num])]
     result))
 
 (defn sha1-update-type-num [type-num ctxt]
@@ -366,11 +322,12 @@ return(nothing);
   return(ctxt_1);
 "))
 
-(deftype ReifiedValue [type-sym type-num fields field-names es]
+(deftype ReifiedValue [type-sym type-num fields field-names impls es]
   (assert (instance? Maybe type-sym))
   (assert (instance? Integer type-num))
   (assert (instance? Vector fields))
   (assert (instance? Vector field-names))
+  (assert (instance? HashMap impls))
   (assert (instance? EvalState es))
 
   Hashable
@@ -379,7 +336,7 @@ return(nothing);
     (sha1-update fields ctxt))
 
   (sha1 [v]
-    (either (flat-map ((for [impl (get-impl (rdr/tag 'sha1) 1 type-num)
+    (either (flat-map ((for [impl (get-impl (rdr/tag 'sha1) type-num)
                              _ (bind-fields v)
                              result (apply-fn impl [v])]
                          result)
@@ -390,7 +347,7 @@ return(nothing);
   Eq
   (=* [x y]
     (either (flat-map ((for [args (eval (list x y))
-                             impl (get-impl (rdr/tag '=*) 2 type-num)
+                             impl (get-impl (rdr/tag '=*) type-num)
                              _ (bind-fields x)
                              r (apply-fn impl args)]
                          r)
@@ -405,6 +362,9 @@ return(nothing);
     (str (either type-sym
                  type-num)))
 
+  (type-mapping [_]
+    {type-num (set fields)})
+
   (type-args [_]
     fields)
 
@@ -416,28 +376,26 @@ return(nothing);
     es)
 
   (set-fields [x new-fields]
-    (ReifiedValue type-sym type-num new-fields field-names es))
-  
-  (find-arity [x args]
-    (comp (flat-map (get-impl (rdr/tag 'invoke) (inc (count args)) type-num)
-                    (fn [impl]
-                      (find-arity impl (comp [x] args))))
-          (abort-interp "Reified value does not implement 'invoke' with" (count args) "arguments"
-                        type-sym)))
+    (ReifiedValue type-sym type-num new-fields field-names impls es))
   
   (update-state [x new-state]
-    (ReifiedValue type-sym type-num fields field-names new-state))
+    (ReifiedValue type-sym type-num fields field-names impls new-state))
 
   (eval [x]
-    (for [curr-state (sm/update-state identity)]
-      (ReifiedValue type-sym type-num fields field-names curr-state)))
+    (for [curr-state (sm/update-state identity)
+          new-impls (traverse (seq impls)
+                              (fn [[sym impl]]
+                                (for [new-impl (eval-def impl)]
+                                  {sym new-impl})))]
+      (ReifiedValue type-sym type-num fields field-names
+                    (comp* {} new-impls)
+                    curr-state)))
 
   (apply-fn [disp-arg args]
-    (let [num-args (inc (count args))]
-      (flat-map (comp (get-impl (rdr/tag 'invoke) num-args type-num)
-                      (get-impl (rdr/tag 'invoke) num-args 0))
-                (fn [impl]
-                  (apply-fn impl (cons disp-arg (seq args)))))))
+    (flat-map (comp (get-impl (rdr/tag 'invoke) type-num)
+                    (get-impl (rdr/tag 'invoke) 0))
+              (fn [impl]
+                (apply-fn impl (cons disp-arg (seq args))))))
 
   (bind-fields [_]
     (either (and (empty? fields)
@@ -450,34 +408,33 @@ return(nothing);
 (extend-type ProtoDispatcher
   Evaluator
   (apply-fn [disp args]
-    (let [num-args (count args)
-          prototype-name (.prototype-name disp)
+    (let [prototype-name (.prototype-name disp)
           path (.path disp)]
-      (either (and (empty? args)
-                   (maybe (abort-interp "At least one argument must be passed to protocol function"
-                                        (str "'" prototype-name "'"))))
-              (let [[disp-arg] args
-                    disp-arg (untag disp-arg)]
-                (for [impl (comp (sm/get-in-val [.ns path .impls prototype-name num-args (get-type disp-arg)])
-                                 (sm/get-in-val [.ns path .impls prototype-name num-args 0])
-                                 (abort-interp "Could not find implementation of"
-                                               (str "'" prototype-name "'") "for type"
-                                               (str "'" (type-name disp-arg) "' with")
-                                               num-args "arguments."))
-                      syms (get-syms)
-                      _ (bind-fields disp-arg)
-                      r (apply-fn impl (comp [disp-arg] (rest args)))
-                      _ (set-syms syms)]
-                  r))))))
+      (either (map (first args)
+                   (fn [disp-arg]
+                     (let [disp-arg (untag disp-arg)
+                           type-num (get-type disp-arg)]
+                       (for [disp (sm/get-in-val [.ns path .syms prototype-name])
+                             impl (comp (sm/when (or (and (instance? ReifiedValue disp-arg)
+                                                          (get-in disp-arg [.impls (rdr/tag prototype-name)]))
+                                                     (get-in disp [.impls type-num])
+                                                     (get-in disp [.impls 0])))
+                                        (abort-interp "Could not find implementation of"
+                                                      (str "'" prototype-name "'") "for type"
+                                                      (str "'" (type-name disp-arg) "' with")
+                                                      (count args) "arguments."))
+                             syms (get-syms)
+                             _ (bind-fields disp-arg)
+                             r (apply-fn impl (comp [disp-arg] (rest args)))
+                             _ (set-syms syms)]
+                         r))))
+              (abort-interp "At least one argument must be passed to protocol function"
+                            (str "'" prototype-name "'"))))))
 
 (deftype TypeMap [type-map]
   Stringable
   (string-list [_]
     (list "<TypeMap " (str type-map) ">"))
-
-  Evaluator
-  (eval [x]
-    (wrap sm/zero-sm x))
 
   Composition
   (comp* [x xs]
@@ -524,10 +481,6 @@ return(nothing);
   (get-state [_]
     es)
 
-  (find-arity [_ args]
-    ;; TODO: such a thing doesn't really exist. Yet.
-    (sm/state-maybe 'some-arity))
-
   (eval [x]
     (map (sm/update-state identity)
          (partial update-state x)))
@@ -536,19 +489,22 @@ return(nothing);
     (for [s (sm/update-state identity)]
       (ReifiedValue (maybe type-sym)
                     reified-type
-                    (vec args) field-names s))))
+                    (vec args) field-names {} s))))
 
 (defn universal-proto-fn [path fn-sym disp-arg & args]
+  (assert (instance? String path))
+  (assert (instance? Symbol fn-sym))
+
   (let [path (either (and (= "core" path)
                           (maybe ""))
-                     path)
-        num-args (inc (count args))]
+                     path)]
     (and (or (instance? ReifiedValue disp-arg)
              (instance? TypeConstructor disp-arg))
          (flat-map ((for [curr-file (sm/get-val .file-name)
                           ns-prefix (sm/get-in-val [.ns curr-file .import-paths path])
-                          impl (sm/get-in-val [.ns (str ns-prefix) .impls (rdr/tag fn-sym)
-                                               num-args (get-type disp-arg)])
+                          impl (comp (sm/when (get-in disp-arg [.impls (rdr/tag fn-sym)]))
+                                     (sm/get-in-val [.ns (str ns-prefix) .syms (rdr/tag fn-sym) .impls
+                                                     (get-type disp-arg)]))
                           _ (bind-fields disp-arg)
                           result (apply-fn impl (cons disp-arg args))]
                       result)
@@ -563,13 +519,18 @@ return(nothing);
                     TypeConstructor
                     ast/fn-ast))
 
-(defn set-impl [sym num-args type-num impl]
-  (assert (instance? fn-thing impl))
+(defn set-proto-impl [sym type-num impl]
+  (assert (instance? rdr/tagged-symbol sym))
 
-  (flat-map (lookup-sym sym)
-            (fn [disp]
-              (sm/assoc-in-val [.ns (.path disp) .impls (.prototype-name disp) num-args type-num]
-                               impl))))
+  (for [curr-file (sm/get-val .file-name)
+        disp (either (map (.ns sym)
+                          (fn [ns-sym]
+                            (sm/get-in-val [.ns curr-file .imports (rdr/tag ns-sym) (rdr/tag (.base sym))])))
+                     (comp (sm/get-in-val [.ns curr-file .syms sym])
+                           (sm/get-in-val [.ns "" .syms sym])))
+        _ (sm/assoc-in-val [.ns (.path disp) .syms (rdr/tag (.base sym)) .impls type-num]
+                           impl)]
+    '_))
 
 (extend-type List
   Evaluator
@@ -689,6 +650,9 @@ return(nothing);
                      ast/CodeAST
                      rdr/tagged-symbol
                      Thunk
+                     ReifiedValue
+                     TypeConstructor
+                     ast/reify-ast
                      ast/integer-ast
                      ast/string-ast
                      ast/fn-ast))
@@ -723,10 +687,9 @@ return(nothing);
   (eval-def [x]
     (for [new-arities (eval-def (.arities x))
           curr-state (sm/update-state identity)]
-      (Thunk (.arities x new-arities) curr-state)))
-
-  (find-arity [x args]
-    (sm/when (find-fn-ast-arity x args)))
+      (-> x
+          (.arities new-arities)
+          (Thunk curr-state))))
 
   (apply-fn [x args]
     (either (map (find-fn-ast-arity x args)
@@ -769,19 +732,6 @@ return(nothing);
           (.params new-params)
           (.body new-body)))))
 
-(defn set-default-impl [fn-sym params body]
-  (let [num-args (count params)]
-    (either (-> body
-                (filter (partial instance? FnBodyAST))
-                (empty?)
-                (map (fn [_]
-                       (sm/state-maybe '_))))
-            (comp (get-impl fn-sym num-args 0)
-                  (flat-map (eval (ast/fn-ast (maybe fn-sym)
-                                              [(ast/fn-arity-ast fn-sym "" params "" body
-                                                                 [] c/top-type)]))
-                            (partial set-impl fn-sym num-args 0))))))
-
 (extend-type ast/prototype-ast
   Evaluator
   (eval [prototype]
@@ -801,9 +751,17 @@ return(nothing);
                                  "failed. Kept existing definition."))
                     (for [curr-file-name (sm/get-val .file-name)
                           _ (comp (lookup-sym fn-sym)
-                                  (bind fn-sym (ProtoDispatcher fn-sym curr-file-name
-                                                                empty-state)))
-                          _ (set-default-impl fn-sym params (.default-body prototype))]
+                                  (bind fn-sym
+                                        (ProtoDispatcher fn-sym curr-file-name
+                                                         (either (map (first (.default-body prototype))
+                                                                      (fn [_]
+                                                                        {0 (ast/fn-ast (maybe fn-sym)
+                                                                                       [(ast/fn-arity-ast
+                                                                                         fn-sym "" params ""
+                                                                                         (.default-body prototype)
+                                                                                         [] c/top-type)])}))
+                                                                 {})
+                                                         empty-state)))]
                       '_))))))
 
 (extend-type ast/protocol-ast
@@ -815,43 +773,19 @@ return(nothing);
             _ (traverse (.prototypes x) eval)]
         '_))))
 
-(defn wrap-arity [fn-arity fn-name]
-  (assert (instance? FnArity fn-arity))
-  (assert (instance? String fn-name))
-  (inline C Fn "
-   FnArity *arity = (FnArity *)fn_arity_0;
-   Function *f = malloc_function(1);
-   if (fn_name_1->type == StringBufferType) {
-     String *s = (String *)fn_name_1;
-     f->name = malloc(s->len + 3);
-     snprintf(f->name, s->len + 1, \"%s\", s->buffer);
-   } else if (fn_name_1->type == SubStringType) {
-     SubString *s = (SubString *)fn_name_1;
-     f->name = malloc(s->len + 3);
-     snprintf(f->name, s->len + 1, \"%s\", s->buffer);
-   }
-   f->arityCount = 1;
-   f->arities[0] = arity;
-   dec_and_free(fn_name_1, 1);
-   return((Value *)f);"))
-
 (defn reify-impls [impls type-num location]
   (assert (instance? HashMap impls))
 
-  (traverse (seq impls)
-            (fn [[protocol proto-impls]]
-              (traverse (for [[fn-sym impl-arities] (seq proto-impls)
-                              arity impl-arities]
-                          [fn-sym arity])
-                        (fn [[fn-sym arity]]
-                          (let [num-args (count (.params arity))]
-                            (comp (get-impl fn-sym num-args type-num)
-                                  (flat-map (eval-def arity)
-                                            (fn [new-arity] 
-                                              (set-impl fn-sym num-args type-num
-                                                        (ast/fn-ast (maybe fn-sym) [new-arity]))))
-                                  (abort-interp "Could not reify an implementation of"
-                                                (str "'" fn-sym "'") "at" (ast-location-str arity)))))))))
+  (traverse (for [[protocol proto-impls] (seq impls)
+                  [fn-sym impl-arities] (seq proto-impls)
+                  arity impl-arities]
+              [fn-sym arity])
+            (fn [[fn-sym arity]]
+              (comp (map (eval-def arity)
+                         (fn [new-arity] 
+                           {fn-sym (ast/fn-ast (maybe fn-sym) [new-arity])}))
+                    (abort-interp "Could not reify an implementation of"
+                                  (str "'" fn-sym "'") "at" location)))))
 
 (extend-type ast/reify-ast
   Evaluator
@@ -862,28 +796,25 @@ return(nothing);
     (let [name (str "reified at: " (ast-location-str x))]
       (for [type-num (sm/get-val .type-count)
             _ (sm/set-val .type-count (inc type-num))
-            _ (reify-impls (.impls x) type-num (ast-location-str x))
-            _ (set-impl (rdr/tag '=*) 2 type-num (fn [x y]
-                                                   (and (=* (get-type x) (get-type y))
-                                                        (maybe x))))]
-        (ReifiedValue (maybe name) type-num [] [] empty-state)))))
+            impls (reify-impls (.impls x) type-num (ast-location-str x))]
+        (ReifiedValue (maybe name) type-num [] []
+                      (comp* {"" {'=* (fn [x y]
+                                        (and (=* (get-type x) (get-type y))
+                                             (maybe x)))}}
+                             impls)
+                      empty-state)))))
 
 (defn find-fn-arity [f n]
   (inline C Maybe "
    return((Value *)maybe((List *)0, (Value *)0, (Value *)findFnArity(f_0, ((Integer *)n_1)->numVal)));
 "))
 
-(extend-type Function
-  Evaluator
-  (find-arity [f args]
-    (sm/when (find-fn-arity f (count args)))))
-
-(extend-type FnArity
-  Evaluator
-  (param-constraints [f]
-    (inline C Maybe "
-   return((Value *)maybe((List *)0, (Value *)0, ((FnArity *)f_0)->paramConstraints));
-")))
+;; (extend-type FnArity
+;;   Evaluator
+;;   (param-constraints [f]
+;;     (inline C Maybe "
+;;    return((Value *)maybe((List *)0, (Value *)0, ((FnArity *)f_0)->paramConstraints));
+;; ")))
 
 (extend-type ast/call-ast
   Evaluator
@@ -900,11 +831,7 @@ return(nothing);
 
   (eval-def [ast]
     (for [target (eval-def (.call-target ast))
-          args (eval-def (.args ast))
-          ;; arity (comp (find-arity target args)
-          ;;             (debug "Couldn't find arity" (type-name target) target
-          ;;                    (ast/file-name ast) (ast/line-number ast)))
-          ]
+          args (eval-def (.args ast))]
       (ast/call-ast target args))))
 
 ;; _ (debug 'target (type-name target) target)
@@ -1029,6 +956,22 @@ return(nothing);
     (flat-map (eval (.val x))
               (partial bind (.binding x)))))
 
+(defn set-impls [impls type-num location]
+  (assert (instance? HashMap impls))
+
+  (traverse (for [[protocol proto-impls] (seq impls)
+                  [fn-sym impl-arities] (seq proto-impls)
+                  arity impl-arities]
+              [fn-sym arity])
+            (fn [[fn-sym arity]]
+              (comp (get-impl fn-sym type-num)
+                    (flat-map (eval-def arity)
+                              (fn [new-arity] 
+                                (set-proto-impl fn-sym type-num
+                                                (ast/fn-ast (maybe fn-sym) [new-arity]))))
+                    (abort-interp "Could not reify an implementation of"
+                                  (str "'" fn-sym "'") "at" location)))))
+
 (extend-type ast/extend-ast
   Evaluator
   (eval [x]
@@ -1038,21 +981,24 @@ return(nothing);
               (fn [type]
                 (traverse (keys (type-mapping type))
                           (fn [type-num]
-                            (comp (reify-impls (.impls x) type-num (ast-location-str x))
+                            (comp (set-impls (.impls x) type-num (ast-location-str x))
                                   (sm/state-maybe '_))))))))
 
 (defn create-constructor [sym fields const-type type-num]
   (for [curr-state (sm/update-state identity)
-        _ (set-impl (rdr/tag 'invoke) (inc (count fields)) const-type
-                    (fn [_ & field-values]
-                      (ReifiedValue (maybe sym) type-num (vec field-values) fields curr-state)))
-        _ (set-impl (rdr/tag 'apply) 2 const-type
-                    (fn [_ field-values-list]
-                      (ReifiedValue (maybe sym) type-num (vec field-values-list) fields curr-state)))
-        _ (set-impl (rdr/tag 'instance?) 2 const-type
-                    (fn [constructor v]
-                      (and (= type-num (get-type v))
-                           (maybe v))))
+        _ (set-proto-impl (rdr/tag 'type-name) const-type
+                          (fn [_]
+                            (str "*" sym " constructor*")))
+        _ (set-proto-impl (rdr/tag 'invoke) const-type
+                          (fn [_ & field-values]
+                            (ReifiedValue (maybe sym) type-num (vec field-values) fields {} curr-state)))
+        _ (set-proto-impl (rdr/tag 'apply) const-type
+                          (fn [_ field-values-list]
+                            (ReifiedValue (maybe sym) type-num (vec field-values-list) fields {} curr-state)))
+        _ (set-proto-impl (rdr/tag 'instance?) const-type
+                          (fn [constructor v]
+                            (and (= type-num (get-type v))
+                                 (maybe v))))
 
         _ (bind sym (TypeConstructor sym const-type type-num fields
                                      {type-num (set fields)} curr-state))]
@@ -1067,51 +1013,53 @@ return(nothing);
     (for [_ (traverse (seq field-indices)
                       (fn [[getter-sym field-idx]]
                         (for [_ (comp (lookup-sym getter-sym)
-                                      (bind getter-sym (ProtoDispatcher getter-sym "" empty-state)))
-                              _ (set-impl getter-sym 1 type-num (fn [x]
-                                                                  (assert (instance? ReifiedValue x))
-                                                                  (-> x
-                                                                      (type-args)
-                                                                      (nth field-idx)
-                                                                      (extract))))
-                              _ (set-impl getter-sym 2 type-num (fn [x new-field]
-                                                                  (assert (instance? ReifiedValue x))
-                                                                  (set-fields x (-> x
-                                                                                    (type-args)
-                                                                                    (store field-idx new-field)
-                                                                                    (extract)))))]
+                                      (bind getter-sym (ProtoDispatcher getter-sym "" {} empty-state)))
+                              _ (set-proto-impl getter-sym type-num (fn
+                                                                      ([x]
+                                                                       (assert (instance? ReifiedValue x))
+                                                                       (-> x
+                                                                           (type-args)
+                                                                           (nth field-idx)
+                                                                           (extract)))
+                                                                      ([x new-field]
+                                                                       (assert (instance? ReifiedValue x))
+                                                                       (set-fields x (-> x
+                                                                                         (type-args)
+                                                                                         (store field-idx new-field)
+                                                                                         (extract))))))]
                           '_)))
           _ (-> (.impls x)
                 (remove (partial instance? c/Constraints))
                 (traverse (fn [impls]
-                            (reify-impls impls type-num (ast-location-str x)))))
-          _ (set-impl (rdr/tag 'get-type) 1 type-num (fn [_]
-                                                       type-num))
-          _ (set-impl (rdr/tag 'type-args) 1 type-num type-args)
-          _ (comp (get-impl (rdr/tag 'get) 2 type-num)
-                  (set-impl (rdr/tag 'get) 2 type-num
-                            (fn [v field]
-                              (assert (instance? ReifiedValue v))
-                              (for [disp (instance? ProtoDispatcher field)
-                                    index (get field-indices (.prototype-name disp))
-                                    field (get (type-args v) index)]
-                                field))))
-          _ (comp (get-impl (rdr/tag 'assoc) 3 type-num)
-                  (set-impl (rdr/tag 'assoc) 3 type-num
-                            (fn [v field new-field-value]
-                              (assert (instance? ReifiedValue v))
-                              (either (for [disp (instance? ProtoDispatcher field)
-                                            index (get field-indices (.prototype-name disp))
-                                            new-fields (store (type-args v) index new-field-value)]
-                                        (.fields v new-fields))
-                                      v))))]
+                            (set-impls impls type-num (ast-location-str x)))))
+          _ (set-proto-impl (rdr/tag 'get-type) type-num (fn [_]
+                                                           type-num))
+          _ (set-proto-impl (rdr/tag 'type-name) type-num (fn [_]
+                                                            (str sym)))
+          _ (set-proto-impl (rdr/tag 'type-args) type-num type-args)
+          _ (comp (get-impl (rdr/tag 'get) type-num)
+                  (set-proto-impl (rdr/tag 'get) type-num
+                                  (fn [v field]
+                                    (assert (instance? ReifiedValue v))
+                                    (for [disp (instance? ProtoDispatcher field)
+                                          index (get field-indices (.prototype-name disp))
+                                          field (get (type-args v) index)]
+                                      field))))
+          _ (comp (get-impl (rdr/tag 'assoc) type-num)
+                  (set-proto-impl (rdr/tag 'assoc) type-num
+                                  (fn [v field new-field-value]
+                                    (assert (instance? ReifiedValue v))
+                                    (either (for [disp (instance? ProtoDispatcher field)
+                                                  index (get field-indices (.prototype-name disp))
+                                                  new-fields (store (type-args v) index new-field-value)]
+                                              (.fields v new-fields))
+                                            v))))]
       '_)))
 
 (extend-type ast/type-ast
   Evaluator
   (eval [x]
-    (let [num-fields (count (.fields x))
-          sym (.sym x)]
+    (let [sym (.sym x)]
       (either (for [_ (and (instance? rdr/tagged-symbol (.sym x))
                            (-> x .sym .ns))]
                 (abort-interp "A new type may not be defined with a namespace qualified symbol."
@@ -1168,11 +1116,6 @@ return(nothing);
                                           ])))]
       (update-state r curr-state)))
 
-  (find-arity [f args]
-    (flat-map (lookup-sym f)
-              (fn [x]
-                (find-arity x args))))
-
   (eval-def [x]
     (comp (lookup-sym x)
           (sm/state-maybe x)))
@@ -1198,12 +1141,11 @@ return(nothing);
                    (maybe (zero sm/state-maybe))))
             (flat-map (sm/get-val .file-name)
                       (fn [ns-path]
-                        (sm/assoc-in-val [.ns ns-path .syms x]
-                                         ;; (either (map (instance? fn-thing v)
-                                         ;;              (fn [v]
-                                         ;;                (ConstrainedFn v c/top-type)))
-                                         ;;         (Constrained v c/top-type))
-                                         v))))))
+                        (let [ns-path (either (for [dot? (first (str x))
+                                                    _ (= dot? ".")]
+                                                "")
+                                              ns-path)]
+                          (sm/assoc-in-val [.ns ns-path .syms x] v)))))))
 
 (extend-type Fn
   Evaluator
