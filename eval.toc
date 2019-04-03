@@ -4,7 +4,7 @@
                           :sha "3435b1b"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "1957ade"))
+                            :sha "6673103"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
                            :sha "1c09660"))
@@ -16,7 +16,7 @@
                            :sha "f655efc"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "b667c1b"))
+                            :sha "ffd6095"))
 
 (def FunctionType (inline C Integer "(Value *)&(Integer){IntegerType, -1, FunctionType};"))
 
