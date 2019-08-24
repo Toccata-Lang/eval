@@ -153,11 +153,10 @@
                        (.script-dir script-dir)
                        (.file-name script-file)
                        (.command-line (vec (cons script-file args))))]
-    (or (for [file-in (fio/file-in script-file)
-              asts (ev/parse {'file-name script-file
-                              'line-number 1}
-                             (lazy-list file-in))]
-          (flat-map (flat-map ((ev/eval asts) eval-state)
-                              first)
-                    last))
-        (maybe -1))))
+    (for [file-in (fio/file-in script-file)
+          asts (ev/parse {'file-name script-file
+                          'line-number 1}
+                         (lazy-list file-in))]
+      (flat-map (flat-map ((ev/eval asts) eval-state)
+                          first)
+                last))))
