@@ -323,6 +323,8 @@ return(nothing);
   return(ctxt_1);
 "))
 
+;; TODO: calling getters/setters for ReifiedValue fields in interpreted code
+;; accesses these fields, not the interpreted ones
 (deftype ReifiedValue [type-sym type-num fields field-names impls es]
   (assert (instance? Maybe type-sym))
   (assert (instance? Integer type-num))
@@ -493,6 +495,7 @@ return(nothing);
                      path)]
     (and (or (instance? ReifiedValue disp-arg)
              (instance? TypeConstructor disp-arg))
+         ;; TODO: refactor this
          (flat-map ((either (map (get-in disp-arg [.impls (rdr/tag fn-sym)])
                                  (fn [impl]
                                    (for [_ (bind-fields disp-arg)
@@ -1026,25 +1029,27 @@ return(nothing);
                                                                                          (store field-idx new-field)
                                                                                          (extract))))))]
                           '_)))
-          _ (set-proto-impl (rdr/tag 'get) type-num
-                            (fn [v field]
-                              (assert (instance? ReifiedValue v))
-                              (for [disp (instance? ProtoDispatcher field)
-                                    index (get field-indices (.prototype-name disp))
-                                    field (get (type-args v) index)]
-                                field)))
-          _ (set-proto-impl (rdr/tag 'assoc) type-num
-                            (fn [v field new-field-value]
-                              (assert (instance? ReifiedValue v))
-                              (either (for [disp (instance? ProtoDispatcher field)
-                                            index (get field-indices (.prototype-name disp))
-                                            new-fields (store (type-args v) index new-field-value)]
-                                        (.fields v new-fields))
-                                      v)))
           _ (-> (.impls x)
                 (remove (partial instance? c/Constraints))
                 (traverse (fn [impls]
                             (set-impls impls (ast-location-str x) type-num))))
+          _ (comp (get-impl (rdr/tag 'get) type-num)
+                  (set-proto-impl (rdr/tag 'get) type-num
+                                  (fn [v field]
+                                    (assert (instance? ReifiedValue v))
+                                    (for [disp (instance? ProtoDispatcher field)
+                                          index (get field-indices (.prototype-name disp))
+                                          field (get (type-args v) index)]
+                                      field))))
+          _ (comp (get-impl (rdr/tag 'assoc) type-num)
+                  (set-proto-impl (rdr/tag 'assoc) type-num
+                                  (fn [v field new-field-value]
+                                    (assert (instance? ReifiedValue v))
+                                    (either (for [disp (instance? ProtoDispatcher field)
+                                                  index (get field-indices (.prototype-name disp))
+                                                  new-fields (store (type-args v) index new-field-value)]
+                                              (.fields v new-fields))
+                                            v))))
           _ (set-proto-impl (rdr/tag 'get-type) type-num (fn [_]
                                                            type-num))
           _ (set-proto-impl (rdr/tag 'type-name) type-num (fn [_]
