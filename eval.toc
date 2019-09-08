@@ -25,7 +25,7 @@
 (defn init [f]
   (inline C "
 universalProtoFn = (Value *)f_0;
-// TODO: dec_and_free(f_0, 1);
+dec_and_free(f_0, 1);
 return(nothing);
 "))
 
@@ -495,7 +495,6 @@ return(nothing);
                      path)]
     (and (or (instance? ReifiedValue disp-arg)
              (instance? TypeConstructor disp-arg))
-         ;; TODO: refactor this
          (flat-map ((either (map (get-in disp-arg [.impls (rdr/tag fn-sym)])
                                  (fn [impl]
                                    (for [_ (bind-fields disp-arg)
@@ -510,14 +509,6 @@ return(nothing);
                               result))
                     (get-state disp-arg))
                    first))))
-
-;; TODO: remove need for or decide to keep
-(def fn-thing (comp Fn
-                    Thunk
-                    ReifiedValue
-                    ProtoDispatcher
-                    TypeConstructor
-                    ast/fn-ast))
 
 (defn set-proto-impl [sym type-num impl]
   (assert (instance? rdr/tagged-symbol sym))
@@ -591,12 +582,6 @@ return(nothing);
   (for [ast (sm/when (some asts (partial instance? ast/call-ast)))
         :when (= (.call-target ast) 'enum)
         type-maps (traverse (.args ast) (fn [arg]
-                                          ;; TODO
-                                          ;; (and (= 1 (count type-map))
-                                          ;;      (flat-map (first (seq type-map))
-                                          ;;                (fn [[type-num field-set]]
-                                          ;;                  (and (empty? field-set)
-                                          ;;                       (< TypeCount type-num)))))
                                           (map (comp (lookup-sym arg)
                                                      (abort-interp "Could not find type definition for"
                                                                    (str "'" arg "'") "at"
@@ -810,6 +795,7 @@ return(nothing);
    return((Value *)maybe((List *)0, (Value *)0, (Value *)findFnArity(f_0, ((Integer *)n_1)->numVal)));
 "))
 
+;; TODO: getting the param constraints of a fn value
 ;; (extend-type FnArity
 ;;   Evaluator
 ;;   (param-constraints [f]
@@ -942,6 +928,13 @@ return(nothing);
           _ (sm/update-state (fn [_] curr-state))
           result (sm/when (last results))]
       result)))
+
+(def fn-thing (comp Fn
+                    Thunk
+                    ReifiedValue
+                    ProtoDispatcher
+                    TypeConstructor
+                    ast/fn-ast))
 
 (extend-type ast/binding-ast
   Evaluator
