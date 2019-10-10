@@ -482,8 +482,7 @@ return(nothing);
                     (sm/state-maybe (either (get-in p-impls [(count args) 'param-consts])
                                             c/top-type)))
               (fn [constraint]
-                (constrain args constraint
-                           file-name line-number))))
+                (constrain args constraint file-name line-number))))
 
   (find-arity [_ args]
     (either (map (first args)
@@ -878,24 +877,27 @@ return(nothing);
     (traverse v eval))
 
   (static-constraint [v]
-    (-> (c/TypeConstraint {c/VectorType #{}} empty-list 'List nothing "")
+    (-> (c/TypeConstraint {c/VectorType #{}} empty-list 'Vector nothing "")
         (c/intersect (c/StaticLengthConstraint (count v) empty-list nothing ""))
         (c/intersect (c/ItemsConstraint (map (take v 20) static-constraint)
                                         c/top-type empty-list nothing ""))))
 
   (constrain [v constraint file-name line-number]
-    (for [_ (sm/when (c/compose-constraints file-name line-number
-                                            (c/StaticLengthConstraint (count v)
-                                                                      (list [file-name line-number])
-                                                                      nothing "")
-                                            (c/update-path constraint file-name line-number)))
-          :let [v (take v 20)]
-          _ (traverse (zip-lists (c/extract-items-constraints constraint (count v))
-                                 v)
-                      (fn [[c arg]]
-                        (either (map (= c c/top-type) sm/state-maybe)
-                                (constrain arg c file-name line-number))))]
-      '_)))
+    (either (and (c/compose-constraints file-name line-number
+                                        (c/intersect (c/StaticLengthConstraint (count v)
+                                                                               (list [file-name line-number])
+                                                                               nothing "")
+                                                     (c/TypeConstraint {c/VectorType #{}}
+                                                                       (list [file-name line-number])
+                                                                       'Vector nothing ""))
+                                        (c/update-path constraint file-name line-number))
+                 (maybe (let [v (take v 20)]
+                          (traverse (zip-lists (c/extract-items-constraints constraint (count v))
+                                               v)
+                                    (fn [[c arg]]
+                                      (either (map (= c c/top-type) sm/state-maybe)
+                                              (constrain arg c file-name line-number)))))))
+            sm/zero-sm)))
 
 ;; (extend-type Future
 ;;   Evaluator
@@ -952,13 +954,26 @@ return(nothing);
                     (sm/when (last values))))))
 
 (deftype interp-call [ast file line]
+  (assert (instance? ast/call-ast ast))
+
   Stringable
   (string-list [_]
     (string-list ast))
 
   Evaluator
   (eval [_]
-    (eval ast))
+    (let [arg-count (count (.args ast))]
+      (for [call-depth (sm/get-val .call-depth)
+            _ (either (map (< call-depth *max-call-depth*) sm/state-maybe)
+                      (abort-interp "Recursion limit exceeded at" (ast-location-str ast)))
+            _ (sm/set-val .call-depth (inc call-depth))
+            target (eval (.call-target ast))
+            args (traverse (.args ast) eval)
+            _ (check-arity target args file line)
+            _ (constrain-args target args file line)
+            r (apply-fn target args)
+            _ (sm/set-val .call-depth call-depth)]
+        r)))
 
   (constrain [_ constraint file-name line-number]
     (constrain ast constraint file-name line-number))
@@ -1150,8 +1165,13 @@ return(nothing);
   Evaluator
   (eval [ast]
     (let [arg-count (count (.args ast))
-          file-name (ast/file-name (.call-target ast))
-          line-number (ast/line-number (.call-target ast))]
+          [file-name line-number] (reduce (cons (.call-target ast) (seq (.args ast)))
+                                          ["" 0]
+                                          (fn [loc ast]
+                                            (either (and (flat-map (first loc) (partial = ""))
+                                                         (maybe [(ast/file-name ast)
+                                                                 (ast/line-number ast)]))
+                                                    loc)))]
       (for [call-depth (sm/get-val .call-depth)
             _ (either (map (< call-depth *max-call-depth*) sm/state-maybe)
                       (abort-interp "Recursion limit exceeded at" (ast-location-str ast)))
