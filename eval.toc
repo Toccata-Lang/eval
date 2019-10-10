@@ -1,22 +1,22 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "3435b1b"))
+                          :sha "4529b1f"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "6673103"))
+                            :sha "de1dad5"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "1c09660"))
+                           :sha "8b07011"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
-                             :sha "1e280ff"))
+                             :sha "964a824"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "f655efc"))
+                           :sha "6782d7e"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "ffd6095"))
+                            :sha "a7f3946"))
 (add-ns typ (module "type-checker.toc"))
 
 (def *max-call-depth* 500)
