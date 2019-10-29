@@ -5,7 +5,7 @@
                           :sha "4529b1f"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "de1dad5"))
+                            :sha "783bbe8"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
                            :sha "6782d7e"))
