@@ -564,6 +564,12 @@ return(nothing);
                  (maybe x))))
 
   Type
+  (has-field [v field]
+    (and (-> field-names
+             (map str)
+             (some (partial = (rest (str (fn-name field))))))
+         (maybe v)))
+
   (type-name [_]
     (str (either type-sym
                  type-num)))
@@ -1718,7 +1724,13 @@ return(nothing);
                                                        c/top-type)))
                     (sm/state-maybe c/top-type))
               (fn [constraints]
-                (constrain args constraints file-name line-number)))))
+                (constrain args constraints file-name line-number))))
+
+  (result-constraint [f args]
+    (comp (flat-map (find-arity f args)
+                    (fn [a]
+                      (sm/when (arity-result-constraint a))))
+          (sm/state-maybe c/top-type))))
 
   ;; (static-constraint [n]
   ;;   ;; TODO: candidate for replaceing by default impl
@@ -1728,11 +1740,6 @@ return(nothing);
   ;;   ;; TODO: finish
   ;;   (sm/state-maybe c/top-type))
 
-  ;; (result-constraint [f args]
-  ;;   (comp (flat-map (find-arity f args)
-  ;;                   (fn [a]
-  ;;                     (sm/when (arity-result-constraint a))))
-  ;;         (sm/state-maybe c/top-type)))
 
 (extend-type ast/block-comment-ast
   Evaluator
