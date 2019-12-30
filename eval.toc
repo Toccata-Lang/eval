@@ -552,8 +552,8 @@ return(nothing);
 
   Eq
   (=* [x y]
-    (either (flat-map ((for [args (eval (list x y))
-                             impl (get-impl '=* 2 type-num)
+    (either (flat-map ((for [impl (get-impl '=* 2 type-num)
+                             args (eval (list x y))
                              _ (bind-fields x)
                              r (apply-fn impl args)]
                          r)
@@ -600,7 +600,7 @@ return(nothing);
   (eval [rv]
     (map (sm/update-state identity)
          (fn [curr-state]
-           (.es rv curr-state))))
+           (ReifiedValue type-sym type-num fields field-names curr-state))))
 
   (apply-fn [disp-arg args]
     (flat-map (find-arity disp-arg args)
@@ -1058,7 +1058,7 @@ return(nothing);
     (sm/when (check-fn-arity f (count args))))
 
   (apply-fn [arity args]
-    (let [body (filter (.body arity) (partial instance? FnBodyAST))]
+    (let [body (remove (.body arity) (partial instance? ast/NoCode))]
       (either (map (empty? body)
                    (fn [_]
                      (abort-interp "Invalid function body at" (ast-location-str arity))))
