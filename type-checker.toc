@@ -101,7 +101,9 @@
 
 (defn get-constraint [var]
   (new-sv (fn [s]
-            [[(either (get s var) c/top-type) s]])))
+            [[(-> (either (get s var) c/top-type)
+                  (c/update-var var))
+              s]])))
 
 (defn set-constraint [var constraint]
   (new-sv (fn [s]
@@ -127,7 +129,7 @@
                                                                     nothing
                                                                     var))
                              (c/intersect (c/ItemsConstraint contents
-                                                             c/top-type
+                                                             c/coll-of-any
                                                              empty-list
                                                              nothing
                                                              var)))]

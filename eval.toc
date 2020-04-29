@@ -118,11 +118,16 @@ return(nothing);
 
 ;; TODO: these are stupid workarounds for a stupid compiler bug
 (deftype Dummy [p-impls])
-(def traverse)
 (def static-constraint)
 (def find-arity)
 (def arity-name)
 (def param-constraints)
+
+(defn traverse [coll f]
+  (-> coll
+      (remove (fn [x]
+                (instance? ast/block-comment-ast x)))
+      (sm/traverse f)))
 
 (defprotocol Evaluator
   (find-arity [x args]
@@ -151,11 +156,6 @@ return(nothing);
 
   (arity-name [x]
     (type-name x))
-
-  (traverse [coll f]
-    ;; traverses a Sequence, applying 'f' to each item
-    ;; 'f' must take one value and return a 'state-maybe' value
-    (assert-result x (instance? sm/new-sm x)))
 
   (untag [s]
     ;; remove the tag information from a symbol
@@ -552,8 +552,8 @@ return(nothing);
 
   Eq
   (=* [x y]
-    (either (flat-map ((for [impl (get-impl '=* 2 type-num)
-                             args (eval (list x y))
+    (either (flat-map ((for [args (eval (list x y))
+                             impl (get-impl '=* 2 type-num)
                              _ (bind-fields x)
                              r (apply-fn impl args)]
                          r)
@@ -600,7 +600,7 @@ return(nothing);
   (eval [rv]
     (map (sm/update-state identity)
          (fn [curr-state]
-           (ReifiedValue type-sym type-num fields field-names curr-state))))
+           (.es rv curr-state))))
 
   (apply-fn [disp-arg args]
     (flat-map (find-arity disp-arg args)
@@ -820,18 +820,11 @@ return(nothing);
   (static-constraint [n]
     (either (map n (fn [inner]
                      (c/intersect (c/TypeConstraint {c/MaybeType #{}} empty-list 'Maybe nothing "")
-                                  (c/InferredInner (static-constraint inner) empty-list nothing ""))))
+                                  (c/CollectionOf (static-constraint inner) empty-list nothing ""))))
             (c/TypeConstraint {c/MaybeType #{}} empty-list 'Maybe nothing ""))))
 
 (extend-type List
   Evaluator
-  (traverse [asts f]
-    (apply (wrap sm/zero-sm list)
-           (-> asts
-               (remove (fn [x]
-                         (instance? ast/block-comment-ast x)))
-               (map f))))
-
   (eval-def [v]
     (traverse v eval-def))
 
@@ -845,7 +838,7 @@ return(nothing);
                                             (take 20)
                                             (map static-constraint)
                                             vec)
-                                        c/top-type empty-list nothing ""))))
+                                        c/coll-of-any empty-list nothing ""))))
 
   (constrain [l constraint file-name line-number]
     (for [_ (sm/when (c/compose-constraints file-name line-number
@@ -863,19 +856,6 @@ return(nothing);
 
 (extend-type Vector
   Evaluator
-  (traverse [asts f]
-    (-> asts
-        (remove (fn [x]
-                  (instance? ast/block-comment-ast x)))
-        reverse
-        (reduce (sm/state-maybe empty-vector)
-                (fn [v ast]
-                  (flat-map (f ast)
-                            (fn [emitted]
-                              (map v (fn [v]
-                                       (conj v emitted)))))))
-        (map reverse)))
-
   (eval-def [v]
     (traverse v eval-def))
 
@@ -886,7 +866,7 @@ return(nothing);
     (-> (c/TypeConstraint {c/VectorType #{}} empty-list 'Vector nothing "")
         (c/intersect (c/StaticLengthConstraint (count v) empty-list nothing ""))
         (c/intersect (c/ItemsConstraint (map (take v 20) static-constraint)
-                                        c/top-type empty-list nothing ""))))
+                                        c/coll-of-any empty-list nothing ""))))
 
   (constrain [v constraint file-name line-number]
     (either (and (c/compose-constraints file-name line-number
@@ -1498,7 +1478,7 @@ return(nothing);
                       (fn [[getter-sym field-idx]]
                         (let [param-consts (c/ItemsConstraint [(c/FieldConstraint getter-sym ""
                                                                                   empty-list nothing "")]
-                                                              c/top-type empty-list nothing "")]
+                                                              c/coll-of-any empty-list nothing "")]
                           (for [_ (comp (lookup-sym getter-sym)
                                         (bind getter-sym (ProtoDispatcher getter-sym ""
                                                                           {1 {'param-consts param-consts}
