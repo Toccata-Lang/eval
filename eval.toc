@@ -986,17 +986,17 @@ return(nothing);
                              (ast/file-name sym) (ast/line-number sym))]
         '_))))
 
-(def FnBodyAST (comp CoreTypes
-                     ast/CodeAST
-                     interp-call
-                     rdr/tagged-symbol
-                     Thunk
-                     ReifiedValue
-                     TypeConstructor
-                     ast/reify-ast
-                     ast/integer-ast
-                     ast/string-ast
-                     ast/fn-ast))
+(def FnBodyAST (any-of CoreTypes
+                       ast/CodeAST
+                       interp-call
+                       rdr/tagged-symbol
+                       Thunk
+                       ReifiedValue
+                       TypeConstructor
+                       ast/reify-ast
+                       ast/integer-ast
+                       ast/string-ast
+                       ast/fn-ast))
 
 (extend-type ast/fn-ast
   Evaluator
@@ -1398,12 +1398,12 @@ return(nothing);
   ;; (result-constraint [_ args]
   ;;   (result-constraint impl-fn args))
 
-(def fn-thing (comp Fn ;; and FnArity
-                    interp-impl
-                    ProtoDispatcher
-                    Thunk
-                    ReifiedValue
-                    TypeConstructor))
+(def fn-thing (any-of Fn
+                      interp-impl
+                      ProtoDispatcher
+                      Thunk
+                      ReifiedValue
+                      TypeConstructor))
 
 (extend-type ast/binding-ast
   Evaluator
