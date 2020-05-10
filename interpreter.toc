@@ -108,7 +108,7 @@
   (let [core-ns (make-compiled-ns "" (comp symbols interp-symbols) protocols {})
         import-paths (reduce base-imports {"" ""}
                              (fn [m import]
-                               (assoc m (.path import) (rdr/tag (.ns-sym import)))))
+                               (assoc m (.path import) (ast/tag (.ns-sym import)))))
         base-imports (reduce base-imports {"" core-ns}
                              (fn [base-imports compiled]
                                (assert (instance? CompiledNs compiled))

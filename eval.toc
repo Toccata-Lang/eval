@@ -682,7 +682,7 @@ return(nothing);
              (maybe v)))))
 
 (deftype TypeConstructor [type-sym type-num reified-type field-names type-map es]
-  (assert (instance? rdr/tagged-symbol type-sym))
+  (assert (instance? ast/tagged-symbol type-sym))
   (assert (instance? Integer type-num))
   (assert (instance? HashMap type-map))
 
@@ -763,7 +763,7 @@ return(nothing);
                                  :when (instance? ast/call-ast args-list)]
                              (.args args-list))
                            empty-list)]
-        :when (instance? rdr/tagged-symbol arg)
+        :when (instance? ast/tagged-symbol arg)
         type-map (lookup-sym arg)
         type-maps (traverse args lookup-sym)]
     (comp* type-map type-maps)))
@@ -811,7 +811,7 @@ return(nothing);
                                 _ (= dot? ".")]
                             (sm/state-maybe ""))
                           (sm/get-val .file-name))
-          _ (update-subs (typ/set-constraint (rdr/tag sym) c/top-type))
+          _ (update-subs (typ/set-constraint (ast/tag sym) c/top-type))
           _ (sm/assoc-in-val [.ns ns-path .syms sym] v)]
       '_)))
 
@@ -978,7 +978,7 @@ return(nothing);
                     (filter (fn [ast]
                               (or (instance? ast/CodeAST ast)
                                   (instance? interp-call ast)
-                                  (instance? rdr/tagged-symbol ast))))
+                                  (instance? ast/tagged-symbol ast))))
                     (remove (partial instance? ast/inline-ast))
                     definition-value)
             _ (bind sym val)
@@ -989,7 +989,7 @@ return(nothing);
 (def FnBodyAST (any-of CoreTypes
                        ast/CodeAST
                        interp-call
-                       rdr/tagged-symbol
+                       ast/tagged-symbol
                        Thunk
                        ReifiedValue
                        TypeConstructor
@@ -1005,7 +1005,7 @@ return(nothing);
           curr-file (sm/get-val .file-name)
           curr-state (sm/update-state identity)]
       (let [fn-sym (either (.fn-sym x)
-                           (rdr/tag 'anon))
+                           (ast/tag 'anon))
             new-fn-sym (or (.ns fn-sym)
                            (maybe (.ns fn-sym (maybe curr-file))))]
         (Thunk new-arities (.fn-sym x) (maybe curr-file) curr-state))))
@@ -1527,8 +1527,7 @@ return(nothing);
   Evaluator
   (eval [ast]
     (let [sym (.sym ast)]
-      (either (for [_ (and (instance? rdr/tagged-symbol sym)
-                           (-> sym .ns))]
+      (either (for [_ (map (instance? ast/tagged-symbol sym) .ns)]
                 (abort-interp "A new type may not be defined with a namespace qualified symbol."
                        (str "'" sym "' is invalid at" (ast-location-str ast))))
               (for [type-num (sm/get-val .type-count)
@@ -1560,7 +1559,7 @@ return(nothing);
                       (get-in s [.ns "" .syms (.base sym)]))
                   (fn [found]
                     (print-err 'found sym found)
-                    (and (instance? rdr/tagged-symbol found)
+                    (and (instance? ast/tagged-symbol found)
                          (lookup-recur constraint found s))))
         (do
           (print-err 'constrain sym constraint)
@@ -1568,13 +1567,13 @@ return(nothing);
             (typ/append-constraint sym constraint file-name line-number))
            s)))))
 
-(extend-type rdr/tagged-symbol
+(extend-type ast/tagged-symbol
   Evaluator
   (uniqueify [x]
     (either (and (.ns x)
                  (maybe (abort-interp "May not use a namespace-qualified symbol at"
                                (ast-location-str x))))
-            (let [new-sym (rdr/tag (gensym (str x "_")) (ast/file-name x) (ast/line-number x))]
+            (let [new-sym (ast/tag (gensym (str x "_")) (ast/file-name x) (ast/line-number x))]
               (for [_ (bind x new-sym)]
                 new-sym))))
 
@@ -1625,7 +1624,7 @@ return(nothing);
   (get-constraints [sym subs]
     (c/update-sym (either (get subs sym)
                           c/top-type)
-                  sym))
+                  (ast/untag sym)))
 
   (constrain-args [s args file-name line-number]
     (flat-map (comp (lookup-sym s)
