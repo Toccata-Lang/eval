@@ -3,10 +3,10 @@
 
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "4529b1f"))
+                          :sha "54d3fc9"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "6782d7e"))
+                           :sha "e843c60"))
 
 (deftype new-sv [invoke-fn]
   (assert (instance? Fn invoke-fn))

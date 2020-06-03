@@ -2,19 +2,19 @@
 (add-ns ev (module "eval.toc"))
 (add-ns c (git-dependency "https://github.com/Toccata-Lang/constraints.git"
                           "constraints.toc"
-                          :sha "4529b1f"))
+                          :sha "54d3fc9"))
 (add-ns rdr (git-dependency "https://github.com/Toccata-Lang/reader.git"
                             "reader.toc"
-                            :sha "783bbe8"))
+                            :sha "75d8f9c"))
 (add-ns sm (git-dependency "https://github.com/Toccata-Lang/state-maybe.git"
                            "state-maybe.toc"
-                           :sha "6782d7e"))
+                           :sha "e843c60"))
 (add-ns fio (git-dependency "https://github.com/Toccata-Lang/file-io.git"
                             "file-io.toc"
                             :sha "4b6a964"))
 (add-ns ast (git-dependency "https://github.com/Toccata-Lang/ast.git"
                             "ast.toc"
-                            :sha "a7f3946"))
+                            :sha "97c5572"))
 
 (def IntegerType (inline C Integer "(Value *)&(Integer){IntegerType, -1, IntegerType};"))
 (def StringBufferType (inline C Integer "(Value *)&(Integer){IntegerType, -1, StringBufferType};"))
