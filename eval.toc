@@ -7,7 +7,7 @@
                             :sha "f308002"))
 (add-ns rd (git-dependency "https://github.com/Toccata-Lang/recursive-descent.git"
                            "recursive-descent.toc"
-                           :sha "6378d02"))
+                           :sha "c9458ce"))
 (add-ns grmr (git-dependency "https://github.com/Toccata-Lang/grammar.git"
                              "grammar.toc"
                              :sha "fa3764b"))
